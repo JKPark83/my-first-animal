@@ -323,12 +323,212 @@ GameConfig.Care = {
 		Tangle = 50, -- 털 엉킴 표시 (거친 털 색/돌출)
 		Dirt = 50, -- 더러움 표시 (얼룩)
 	},
+
+	-- 굶주림 사망 규칙 ───────────────────────────────────────────────
+	-- 먹이를 주지 않은 채(=먹이주기 케어를 안 한 채) 시간이 지나면 알파카가 떠난다.
+	-- "먹이를 준 마지막 시각"(모델 Fed 속성)을 기준으로 경과 시간을 잰다.
+	-- ⚠ 접속 중(서버에 모델이 떠 있는 동안)에만 카운트된다. 퇴장하면 다시 스폰될 때
+	--   Fed 가 현재시각으로 초기화되므로 오프라인 시간으로는 죽지 않는다(과한 패널티 방지).
+	starveWarnTime = 600, -- 이 시간(초) 동안 안 먹이면 경고 알림 1회 (10분)
+	starveDeathTime = 1200, -- 이 시간(초) 동안 안 먹이면 사망 (20분)
 }
 
 -- 행복도 계산: 100 - (Hunger + Tangle + Dirt)/3, 0~100 으로 클램프
 function GameConfig.computeHappiness(hunger: number, tangle: number, dirt: number): number
 	local avgNeed = (hunger + tangle + dirt) / 3
 	return math.clamp(100 - avgNeed, 0, 100)
+end
+
+-- =====================================================================
+-- 먹이 상점 (인벤토리형 먹이)
+-- =====================================================================
+-- 먹이는 "먹이 상점"에서 구매해 인벤토리에 쌓아두고, 그중 하나를 "사용 먹이"로
+-- 선택한다. 화면 하단 [먹이주기] 버튼을 누르면 선택한 먹이가 1개 소비되며
+-- 그 먹이의 효과(보상 배수·추가 정돈·양털 보너스)가 적용된다.
+-- 인벤토리가 비면 자동으로 기본 먹이(grass, 무료)로 대체된다.
+--
+--  price      : 1개 구매 가격(게임머니). 0 = 기본 제공(무료·무한).
+--  rewardMult : 먹이주기 케어 보상 배수 (기본 1.0)
+--  extraClean : 먹이주기 시 털엉킴/더러움도 이만큼(0~100) 함께 감소
+--  woolBonus  : 먹이를 줄 때 그 알파카의 양털(머니)에 즉시 적립되는 양(상한 적용)
+export type FoodDef = {
+	id: string,
+	displayName: string,
+	emoji: string,
+	price: number,
+	rewardMult: number,
+	extraClean: number,
+	woolBonus: number,
+	desc: string,
+}
+
+GameConfig.Foods = {
+	{
+		id = "grass",
+		displayName = "기본 풀",
+		emoji = "🌿",
+		price = 0,
+		rewardMult = 1.0,
+		extraClean = 0,
+		woolBonus = 0,
+		desc = "어디에나 자라는 기본 먹이. 공짜이며 항상 사용할 수 있어요.",
+	},
+	{
+		id = "carrot",
+		displayName = "아삭 당근",
+		emoji = "🥕",
+		price = 200,
+		rewardMult = 1.5,
+		extraClean = 0,
+		woolBonus = 5,
+		desc = "달콤한 당근. 케어 보상이 1.5배가 돼요.",
+	},
+	{
+		id = "hay",
+		displayName = "영양 건초",
+		emoji = "🌾",
+		price = 1200,
+		rewardMult = 2.0,
+		extraClean = 25,
+		woolBonus = 40,
+		desc = "든든한 건초. 보상 2배 + 털도 살짝 정돈돼요.",
+	},
+	{
+		id = "premium",
+		displayName = "프리미엄 사료",
+		emoji = "🍱",
+		price = 6000,
+		rewardMult = 3.0,
+		extraClean = 60,
+		woolBonus = 250,
+		desc = "고급 사료. 보상 3배 + 털·더러움 크게 정돈 + 양털 보너스.",
+	},
+	{
+		id = "magic",
+		displayName = "마법 사료",
+		emoji = "✨",
+		price = 30000,
+		rewardMult = 5.0,
+		extraClean = 100,
+		woolBonus = 1500,
+		desc = "전설의 사료. 보상 5배 + 모든 욕구 정돈 + 양털 듬뿍!",
+	},
+}
+
+GameConfig.FoodsById = {} :: { [string]: FoodDef }
+for _, f in ipairs(GameConfig.Foods) do
+	GameConfig.FoodsById[f.id] = f
+end
+
+-- 인벤토리가 비었을 때 자동으로 쓰는 기본 먹이 id
+GameConfig.DefaultFood = "grass"
+
+-- =====================================================================
+-- 악세사리 가게 (알파카 옷/장신구)
+-- =====================================================================
+-- 악세사리는 "악세사리 가게"에서 구매하면 보유 목록에 추가되고, 보유한 악세사리를
+-- 골라 내 알파카에게 입힐 수 있다(알파카 1마리당 1개 착용). AlpacaSpawner 가 kind 에
+-- 맞춰 머리/목/등에 파트를 붙인다.
+--
+--  kind   : 장착 형태 — "hat"|"tophat"|"bow"|"scarf"|"glasses"|"flower"|"crown"|"cape"
+--  color  : 주 색상,  accent : 보조 색상(없으면 color 재사용)
+export type AccessoryDef = {
+	id: string,
+	displayName: string,
+	emoji: string,
+	price: number,
+	kind: string,
+	color: Color3,
+	accent: Color3?,
+	desc: string,
+}
+
+GameConfig.Accessories = {
+	{
+		id = "strawhat",
+		displayName = "밀짚모자",
+		emoji = "👒",
+		price = 300,
+		kind = "hat",
+		color = Color3.fromRGB(226, 196, 124),
+		accent = Color3.fromRGB(176, 120, 70),
+		desc = "농부 알파카의 필수템. 햇살 가득 밀짚모자.",
+	},
+	{
+		id = "bow",
+		displayName = "리본",
+		emoji = "🎀",
+		price = 400,
+		kind = "bow",
+		color = Color3.fromRGB(240, 120, 170),
+		accent = Color3.fromRGB(210, 80, 140),
+		desc = "머리에 콕 얹는 깜찍한 리본.",
+	},
+	{
+		id = "scarf",
+		displayName = "목도리",
+		emoji = "🧣",
+		price = 600,
+		kind = "scarf",
+		color = Color3.fromRGB(210, 80, 80),
+		accent = Color3.fromRGB(245, 240, 235),
+		desc = "포근한 겨울 목도리.",
+	},
+	{
+		id = "glasses",
+		displayName = "선글라스",
+		emoji = "🕶️",
+		price = 800,
+		kind = "glasses",
+		color = Color3.fromRGB(35, 35, 40),
+		accent = Color3.fromRGB(90, 90, 100),
+		desc = "한껏 멋부린 선글라스.",
+	},
+	{
+		id = "flower",
+		displayName = "꽃 화관",
+		emoji = "🌸",
+		price = 1000,
+		kind = "flower",
+		color = Color3.fromRGB(245, 140, 195),
+		accent = Color3.fromRGB(255, 230, 120),
+		desc = "들꽃을 엮어 만든 화관.",
+	},
+	{
+		id = "tophat",
+		displayName = "실크 모자",
+		emoji = "🎩",
+		price = 1500,
+		kind = "tophat",
+		color = Color3.fromRGB(28, 28, 34),
+		accent = Color3.fromRGB(120, 90, 60),
+		desc = "신사 알파카를 위한 고급 실크 모자.",
+	},
+	{
+		id = "cape",
+		displayName = "영웅 망토",
+		emoji = "🦸",
+		price = 2500,
+		kind = "cape",
+		color = Color3.fromRGB(120, 70, 200),
+		accent = Color3.fromRGB(240, 220, 90),
+		desc = "펄럭이는 영웅의 망토.",
+	},
+	{
+		id = "crown",
+		displayName = "황금 왕관",
+		emoji = "👑",
+		price = 5000,
+		kind = "crown",
+		color = Color3.fromRGB(255, 215, 80),
+		accent = Color3.fromRGB(255, 120, 160),
+		desc = "농장의 왕! 반짝이는 황금 왕관.",
+	},
+}
+
+GameConfig.AccessoriesById = {} :: { [string]: AccessoryDef }
+for _, a in ipairs(GameConfig.Accessories) do
+	GameConfig.AccessoriesById[a.id] = a
 end
 
 -- =====================================================================

@@ -41,6 +41,10 @@ local plotOwner: { [number]: number? } = {} -- plot index -> userId
 local builtSpawn: SpawnLocation? = nil
 local builtShopPad: BasePart? = nil
 local builtShopTeleport: CFrame? = nil -- 가게로 빠른 이동 시 도착 지점(가게 패드 위, 가게를 바라봄)
+local builtFoodPad: BasePart? = nil -- 먹이 상점 패드(밟으면 먹이 상점 열림)
+local builtFoodTeleport: CFrame? = nil -- 먹이 상점으로 빠른 이동 도착 지점
+local builtAccessoryPad: BasePart? = nil -- 악세사리 가게 패드(밟으면 악세사리 가게 열림)
+local builtAccessoryTeleport: CFrame? = nil -- 악세사리 가게로 빠른 이동 도착 지점
 local builtGaragePad: BasePart? = nil -- 밟으면 카트가 소환되는 차고 패드
 local builtKartSpawn: CFrame? = nil -- 카트 소환 위치(차고 패드 위, 농장 방향)
 local leaderboardLabel: TextLabel? = nil
@@ -58,6 +62,102 @@ local function part(props: { [string]: any }, parent: Instance): BasePart
 	end
 	p.Parent = parent
 	return p
+end
+
+-- 보조 상점(먹이/악세사리) 건물 + 입장 패드를 만든다.
+-- 알파카 가게와 같은 구조를 약간 작게 만들며, 패드(밟으면 열림)와 텔레포트 도착 CFrame 을 반환한다.
+local function buildSideShop(
+	parent: Instance,
+	folderName: string,
+	center: Vector3,
+	signText: string,
+	roofColor: Color3,
+	padText: string,
+	padColor: Color3
+): (BasePart, CFrame)
+	local f = Instance.new("Folder")
+	f.Name = folderName
+	f.Parent = parent
+
+	part({
+		Name = "Floor",
+		Size = Vector3.new(36, 1, 24),
+		Position = center + Vector3.new(0, 0.5, 0),
+		Material = Enum.Material.WoodPlanks,
+		Color = Color3.fromRGB(210, 180, 140),
+	}, f)
+	part({
+		Name = "BackWall",
+		Size = Vector3.new(36, 14, 1),
+		Position = center + Vector3.new(0, 7, -11.5),
+		Material = Enum.Material.SmoothPlastic,
+		Color = Color3.fromRGB(245, 230, 210),
+	}, f)
+	for _, sx in ipairs({ -1, 1 }) do
+		part({
+			Name = "SideWall",
+			Size = Vector3.new(1, 14, 24),
+			Position = center + Vector3.new(sx * 18, 7, 0),
+			Material = Enum.Material.SmoothPlastic,
+			Color = Color3.fromRGB(245, 230, 210),
+		}, f)
+	end
+	part({
+		Name = "Roof",
+		Size = Vector3.new(42, 1.5, 30),
+		Position = center + Vector3.new(0, 14.5, 0),
+		Material = Enum.Material.SmoothPlastic,
+		Color = roofColor,
+	}, f)
+
+	-- 간판
+	local signGui = Instance.new("BillboardGui")
+	signGui.Size = UDim2.fromScale(14, 3.6)
+	signGui.StudsOffset = Vector3.new(0, 4, 0)
+	signGui.AlwaysOnTop = false
+	signGui.Parent = part({
+		Name = "Sign",
+		Size = Vector3.new(1, 1, 1),
+		Transparency = 1,
+		Position = center + Vector3.new(0, 16, 0),
+	}, f)
+	local signLabel = Instance.new("TextLabel")
+	signLabel.Size = UDim2.fromScale(1, 1)
+	signLabel.BackgroundTransparency = 1
+	signLabel.Text = signText
+	signLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	signLabel.TextStrokeTransparency = 0.3
+	signLabel.Font = Enum.Font.FredokaOne
+	signLabel.TextScaled = true
+	signLabel.Parent = signGui
+
+	-- 입장 패드(밟으면 해당 상점 열림) — 건물 앞(+Z, 허브 방향)
+	local pad = part({
+		Name = "Pad",
+		Size = Vector3.new(18, 1, 11),
+		Position = center + Vector3.new(0, 1.1, 18),
+		Material = Enum.Material.Neon,
+		Color = padColor,
+	}, f)
+	-- 텔레포트 도착 지점: 패드 위(기본 lookVector -Z → 건물 방향)
+	local teleCF = CFrame.new(pad.Position + Vector3.new(0, 3, 0))
+
+	local padGui = Instance.new("BillboardGui")
+	padGui.Size = UDim2.fromScale(9, 2.4)
+	padGui.StudsOffset = Vector3.new(0, 4, 0)
+	padGui.AlwaysOnTop = true
+	padGui.MaxDistance = 80
+	padGui.Parent = pad
+	local padLabel = Instance.new("TextLabel")
+	padLabel.Size = UDim2.fromScale(1, 1)
+	padLabel.BackgroundTransparency = 1
+	padLabel.Text = padText
+	padLabel.TextColor3 = Color3.fromRGB(80, 50, 20)
+	padLabel.Font = Enum.Font.FredokaOne
+	padLabel.TextScaled = true
+	padLabel.Parent = padGui
+
+	return pad, teleCF
 end
 
 -- 슬롯 배치 CFrame 계산: 농장 중심 기준 slotCols x slotRows 그리드
@@ -358,6 +458,31 @@ function FarmBuilder.build(): Folder
 	padLabel.TextScaled = true
 	padLabel.Parent = padGui
 
+	-- 먹이 상점(알파카 가게 왼쪽, -X) / 악세사리 가게(오른쪽, +X)
+	local foodPad, foodTele = buildSideShop(
+		root,
+		"FoodShop",
+		Vector3.new(-64, 0, -44),
+		"🍽️ 먹이 상점",
+		Color3.fromRGB(120, 180, 90),
+		"🍽️ 먹이 상점",
+		Color3.fromRGB(170, 230, 130)
+	)
+	builtFoodPad = foodPad
+	builtFoodTeleport = foodTele
+
+	local accPad, accTele = buildSideShop(
+		root,
+		"AccessoryShop",
+		Vector3.new(64, 0, -44),
+		"🎀 악세사리 가게",
+		Color3.fromRGB(210, 120, 180),
+		"🎀 악세사리 가게",
+		Color3.fromRGB(245, 180, 220)
+	)
+	builtAccessoryPad = accPad
+	builtAccessoryTeleport = accTele
+
 	-- 글로벌 순위 전광판 (허브 동쪽)
 	local board = part({
 		Name = "LeaderboardBoard",
@@ -562,6 +687,22 @@ end
 -- 가게로 빠른 이동 시 도착 CFrame (가게 패드 위). 빌드 전이면 nil.
 function FarmBuilder.getShopTeleportCFrame(): CFrame?
 	return builtShopTeleport
+end
+
+-- 먹이 상점 패드 / 텔레포트 도착 CFrame. 빌드 전이면 nil.
+function FarmBuilder.getFoodPad(): BasePart?
+	return builtFoodPad
+end
+function FarmBuilder.getFoodTeleportCFrame(): CFrame?
+	return builtFoodTeleport
+end
+
+-- 악세사리 가게 패드 / 텔레포트 도착 CFrame. 빌드 전이면 nil.
+function FarmBuilder.getAccessoryPad(): BasePart?
+	return builtAccessoryPad
+end
+function FarmBuilder.getAccessoryTeleportCFrame(): CFrame?
+	return builtAccessoryTeleport
 end
 
 -- 카트 차고 패드 (밟으면 카트 소환). 빌드 전이면 nil.

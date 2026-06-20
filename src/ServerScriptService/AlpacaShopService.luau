@@ -205,6 +205,132 @@ function AlpacaShopService.init()
 		-- 완료 알림 (추가 후 최신값 조회)
 		notify(player, "농장 슬롯을 확장했어요! (현재 " .. DataManager.getSlots(player) .. "칸)")
 	end)
+
+	-- ------------------------------------------------------------------
+	-- RequestBuyFood : 먹이 구매 (인벤토리에 1개 적립)
+	-- ------------------------------------------------------------------
+	Remotes.Event("RequestBuyFood").OnServerEvent:Connect(function(player: Player, foodId: unknown)
+		if not DataManager.isLoaded(player) then
+			return
+		end
+		if type(foodId) ~= "string" then
+			return
+		end
+		local food = GameConfig.FoodsById[foodId]
+		if not food then
+			notify(player, "존재하지 않는 먹이예요.", true)
+			return
+		end
+		if food.price <= 0 then
+			notify(player, food.displayName .. "은(는) 기본 제공이라 구매할 필요가 없어요.", true)
+			return
+		end
+		if DataManager.getMoney(player) < food.price then
+			notify(player, "돈이 부족해요.", true)
+			return
+		end
+		-- 금액 차감 (경쟁 조건 방어)
+		if not DataManager.addMoney(player, -food.price) then
+			notify(player, "돈이 부족해요.", true)
+			return
+		end
+		DataManager.addFood(player, foodId, 1)
+		notify(player, food.emoji .. " " .. food.displayName .. " 구매! (보유 " .. DataManager.getFoodCount(player, foodId) .. "개)")
+	end)
+
+	-- ------------------------------------------------------------------
+	-- RequestSelectFood : 사용할 먹이 선택
+	-- ------------------------------------------------------------------
+	Remotes.Event("RequestSelectFood").OnServerEvent:Connect(function(player: Player, foodId: unknown)
+		if not DataManager.isLoaded(player) then
+			return
+		end
+		if type(foodId) ~= "string" or not GameConfig.FoodsById[foodId] then
+			return
+		end
+		local food = GameConfig.FoodsById[foodId]
+		-- 유료 먹이는 보유 중일 때만 선택 가능(기본 무료 먹이는 항상 가능)
+		if food.price > 0 and DataManager.getFoodCount(player, foodId) <= 0 then
+			notify(player, "먹이를 보유하고 있지 않아요. 먼저 구매하세요.", true)
+			return
+		end
+		if DataManager.setSelectedFood(player, foodId) then
+			notify(player, food.emoji .. " " .. food.displayName .. "을(를) 사용 먹이로 선택했어요.")
+		end
+	end)
+
+	-- ------------------------------------------------------------------
+	-- RequestBuyAccessory : 악세사리 구매 (보유 목록에 추가)
+	-- ------------------------------------------------------------------
+	Remotes.Event("RequestBuyAccessory").OnServerEvent:Connect(function(player: Player, accId: unknown)
+		if not DataManager.isLoaded(player) then
+			return
+		end
+		if type(accId) ~= "string" then
+			return
+		end
+		local acc = GameConfig.AccessoriesById[accId]
+		if not acc then
+			notify(player, "존재하지 않는 악세사리예요.", true)
+			return
+		end
+		if DataManager.hasAccessory(player, accId) then
+			notify(player, "이미 보유한 악세사리예요.", true)
+			return
+		end
+		if DataManager.getMoney(player) < acc.price then
+			notify(player, "돈이 부족해요.", true)
+			return
+		end
+		if not DataManager.addMoney(player, -acc.price) then
+			notify(player, "돈이 부족해요.", true)
+			return
+		end
+		DataManager.addAccessory(player, accId)
+		notify(player, acc.emoji .. " " .. acc.displayName .. " 구매 완료! 알파카에게 입혀보세요.")
+	end)
+
+	-- ------------------------------------------------------------------
+	-- RequestEquipAccessory : 보유 악세사리를 특정 알파카에 착용/해제
+	--   accId == "" 또는 nil → 벗기기
+	-- ------------------------------------------------------------------
+	Remotes.Event("RequestEquipAccessory").OnServerEvent:Connect(function(player: Player, uid: unknown, accId: unknown)
+		if not DataManager.isLoaded(player) then
+			return
+		end
+		if type(uid) ~= "string" then
+			return
+		end
+		local rec = DataManager.getAlpacaByUid(player, uid)
+		if not rec then
+			return -- 본인 소유 알파카가 아니면 무시
+		end
+		local model = FarmService.getModelByUid(player, uid)
+
+		-- 벗기기
+		if accId == nil or accId == "" then
+			DataManager.setAlpacaAccessory(player, uid, nil)
+			if model then
+				AlpacaSpawner.applyAccessory(model, nil)
+			end
+			notify(player, "악세사리를 벗겼어요.")
+			return
+		end
+
+		if type(accId) ~= "string" or not GameConfig.AccessoriesById[accId] then
+			return
+		end
+		if not DataManager.hasAccessory(player, accId) then
+			notify(player, "먼저 악세사리를 구매하세요.", true)
+			return
+		end
+		DataManager.setAlpacaAccessory(player, uid, accId)
+		if model then
+			AlpacaSpawner.applyAccessory(model, accId)
+		end
+		local acc = GameConfig.AccessoriesById[accId]
+		notify(player, acc.emoji .. " " .. acc.displayName .. " 착용 완료!")
+	end)
 end
 
 return AlpacaShopService

@@ -27,14 +27,20 @@ local EVENT_NAMES = {
 	"RequestCare", -- 케어 요청 (uid, careType: "feed"|"brush"|"bath")
 	"RequestCollectWool", -- 양털 수집 요청 (uid 또는 nil=전체)
 	"RequestBuyGamePass", -- 로벅스 게임패스 구매 요청 (passKey)
-	"RequestTeleport", -- 빠른 이동 요청 (target: "shop"=가게앞 | "home"=내 농장)
+	"RequestTeleport", -- 빠른 이동 요청 (target: "shop"|"home"|"food"|"accessory")
+	"RequestBuyFood", -- 먹이 구매 요청 (foodId)
+	"RequestSelectFood", -- 사용할 먹이 선택 요청 (foodId)
+	"RequestBuyAccessory", -- 악세사리 구매 요청 (accId)
+	"RequestEquipAccessory", -- 악세사리 착용/해제 요청 (uid, accId 또는 ""=벗기기)
 
 	-- 서버 → 클라
-	"PlayerDataUpdated", -- 플레이어 데이터(머니/슬롯/도감/보유알파카/부스트) 갱신
+	"PlayerDataUpdated", -- 플레이어 데이터(머니/슬롯/도감/보유알파카/부스트/먹이/악세사리) 갱신
 	"CareFeedback", -- 케어 성공 피드백 (uid, careType, reward) — 화면 플로팅 텍스트용
 	"WoolCollected", -- 양털 수집 결과 (amount) — 피드백
 	"LeaderboardUpdated", -- 글로벌 총자산 순위 갱신
-	"OpenShopRequest", -- 가게 패드를 밟으면 클라에 상점 열기 신호
+	"OpenShopRequest", -- 알파카 가게 패드를 밟으면 클라에 상점 열기 신호
+	"OpenFoodShop", -- 먹이 상점 패드를 밟으면 클라에 먹이 상점 열기 신호
+	"OpenAccessoryShop", -- 악세사리 가게 패드를 밟으면 클라에 악세사리 가게 열기 신호
 	"PromptNameAlpaca", -- 구매 직후 이름짓기 모달 요청 (uid, defId, displayName)
 	"Notify", -- 일반 알림 메시지
 }

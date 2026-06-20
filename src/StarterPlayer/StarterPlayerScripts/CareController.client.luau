@@ -379,6 +379,69 @@ local function playCareAnim(careType: string)
 	end
 end
 
+-- [절차적 제스처] R15 어깨 Motor6D.Transform 를 RenderStepped 에서 직접 덮어써
+-- 캐릭터가 실제로 "빗질/목욕" 하는 팔 동작을 취하게 한다.
+--   • brush : 오른팔만 위아래로 빗어내리는 동작
+--   • bath  : 양팔을 앞으로 들어 함께 문지르는 동작
+-- R15 팔 관절이 없으면(R6 등) 기존 이모트/점프 폴백(playCareAnim)을 사용한다.
+local gestureToken = 0
+local function playProceduralGesture(careType: string)
+	local character = localPlayer.Character
+	if not character then return end
+	local humanoid = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+	if not humanoid then return end
+
+	-- R15 어깨 Motor6D 찾기 (RightShoulder 는 RightUpperArm 하위에 있음)
+	local rUpper = character:FindFirstChild("RightUpperArm")
+	local lUpper = character:FindFirstChild("LeftUpperArm")
+	local rShoulder = (rUpper and rUpper:FindFirstChild("RightShoulder")) :: Motor6D?
+	local lShoulder = (lUpper and lUpper:FindFirstChild("LeftShoulder")) :: Motor6D?
+
+	-- R15 어깨가 없으면(R6 등) 이모트/점프 폴백
+	if not rShoulder then
+		playCareAnim(careType)
+		return
+	end
+	local rs = rShoulder :: Motor6D
+
+	gestureToken += 1
+	local myToken = gestureToken
+	local twoArm = (careType == "bath")
+	local duration = twoArm and 1.5 or 1.3
+	local elapsed = 0
+	local conn: RBXScriptConnection? = nil
+
+	conn = RunService.RenderStepped:Connect(function(dt: number)
+		-- 새 제스처가 시작됐거나 관절이 사라지면 종료
+		if myToken ~= gestureToken or not rs.Parent then
+			if conn then conn:Disconnect() end
+			return
+		end
+		elapsed += dt
+		if elapsed >= duration then
+			-- 원위치 복원 후 종료
+			rs.Transform = CFrame.identity
+			if lShoulder then
+				(lShoulder :: Motor6D).Transform = CFrame.identity
+			end
+			if conn then conn:Disconnect() end
+			return
+		end
+		-- 시작·끝을 부드럽게(페이드) + 빠른 문지르기 진동
+		local fade = math.sin(math.clamp(elapsed / duration, 0, 1) * math.pi)
+		local scrub = math.sin(elapsed * 16) * 0.5 * fade
+		if twoArm then
+			rs.Transform = CFrame.Angles(math.rad(-95 * fade), 0, math.rad(20 * fade)) * CFrame.Angles(scrub, 0, 0)
+			if lShoulder then
+				(lShoulder :: Motor6D).Transform = CFrame.Angles(math.rad(-95 * fade), 0, math.rad(-20 * fade))
+					* CFrame.Angles(scrub, 0, 0)
+			end
+		else
+			rs.Transform = CFrame.Angles(math.rad(-80 * fade), 0, math.rad(15 * fade)) * CFrame.Angles(scrub, 0, 0)
+		end
+	end)
+end
+
 -- ─────────────────────────────────────────────────────────────
 -- CareFeedback — 플로팅 보상 텍스트
 -- ─────────────────────────────────────────────────────────────
@@ -468,6 +531,14 @@ Remotes.Event("CareFeedback").OnClientEvent:Connect(function(uid: string, careTy
 		spawnFloatingText(targetModel, reward, careType)
 	end
 
-	-- [3] 케어 제스처 애니메이션 재생 (모델 유무와 무관하게 항상 실행)
-	playCareAnim(careType)
+	-- [3] 케어 제스처 재생 (모델 유무와 무관하게 항상 실행)
+	--     빗질/목욕은 실제 팔 동작(절차적 제스처), 먹이주기는 기존 이모트.
+	if careType == "brush" or careType == "bath" then
+		playProceduralGesture(careType)
+	else
+		-- 진행 중인 절차적 제스처(빗질/목욕)가 있으면 토큰을 올려 즉시 취소시킨다.
+		-- (그렇지 않으면 RenderStepped 루프가 어깨 Transform 을 계속 덮어써 팔 자세가 깨짐)
+		gestureToken += 1
+		playCareAnim(careType)
+	end
 end)

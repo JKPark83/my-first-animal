@@ -344,10 +344,26 @@ local shopTpBtn = makeButton("🏪 가게로", Color3.fromRGB(78, 152, 212), {
 }, teleportStack)
 corner(13, shopTpBtn)
 
+-- 먹이 상점 버튼
+local foodTpBtn = makeButton("🍽️ 먹이상점", Color3.fromRGB(120, 180, 90), {
+	Size        = UDim2.new(1, 0, 0, 54),
+	LayoutOrder = 2,
+	ZIndex      = 5,
+}, teleportStack)
+corner(13, foodTpBtn)
+
+-- 악세사리 가게 버튼
+local accTpBtn = makeButton("🎀 악세사리", Color3.fromRGB(210, 120, 180), {
+	Size        = UDim2.new(1, 0, 0, 54),
+	LayoutOrder = 3,
+	ZIndex      = 5,
+}, teleportStack)
+corner(13, accTpBtn)
+
 -- 내 농장 버튼
 local homeTpBtn = makeButton("🏠 내 농장", Color3.fromRGB(85, 168, 85), {
 	Size        = UDim2.new(1, 0, 0, 54),
-	LayoutOrder = 2,
+	LayoutOrder = 4,
 	ZIndex      = 5,
 }, teleportStack)
 corner(13, homeTpBtn)
@@ -363,12 +379,20 @@ corner(13, homeTpBtn)
 local shopFrame: any = nil
 local dexFrame:  any = nil
 local rankFrame: any = nil
+local foodFrame: any = nil
+local accFrame:  any = nil
+
+-- 패널 새로고침 핸들러 (do 블록 안에서 할당, PlayerDataUpdated 에서 호출)
+local refreshFoodPanel: any = nil
+local refreshAccPanel:  any = nil
 
 -- 열린 패널을 모두 닫음
 local function closeAllPanels()
 	if shopFrame then shopFrame.Visible = false end
 	if dexFrame  then dexFrame.Visible  = false end
 	if rankFrame then rankFrame.Visible = false end
+	if foodFrame then foodFrame.Visible = false end
+	if accFrame  then accFrame.Visible  = false end
 end
 
 -- ======================================================================
@@ -380,6 +404,20 @@ shopTpBtn.Activated:Connect(function()
 	playSound(GameConfig.Sounds.teleport)
 	closeAllPanels()
 	Remotes.Event("RequestTeleport"):FireServer("shop")
+end)
+
+foodTpBtn.Activated:Connect(function()
+	playSound(GameConfig.Sounds.click)
+	playSound(GameConfig.Sounds.teleport)
+	closeAllPanels()
+	Remotes.Event("RequestTeleport"):FireServer("food")
+end)
+
+accTpBtn.Activated:Connect(function()
+	playSound(GameConfig.Sounds.click)
+	playSound(GameConfig.Sounds.teleport)
+	closeAllPanels()
+	Remotes.Event("RequestTeleport"):FireServer("accessory")
 end)
 
 homeTpBtn.Activated:Connect(function()
@@ -655,6 +693,390 @@ do
 		refreshExpandBtn()
 	end)
 end -- 상점 블록 끝
+
+-- ======================================================================
+-- 먹이 상점 패널 (인벤토리형: 구매해 쌓아두고 '사용 먹이'를 골라 먹이주기)
+-- ======================================================================
+do
+	local panel = makePanelBase("🍽️ 먹이 상점")
+	foodFrame = panel
+
+	makeLabel("먹이를 구매해 쌓아두고, '사용하기'로 고른 먹이가 먹이주기에 쓰여요.", {
+		Size           = UDim2.new(1, -24, 0, 24),
+		Position       = UDim2.new(0, 12, 0, 62),
+		TextColor3     = Color3.fromRGB(110, 86, 50),
+		Font           = Enum.Font.Gotham,
+		TextScaled     = false,
+		TextSize       = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex         = 21,
+	}, panel)
+
+	local scroll = make("ScrollingFrame", {
+		Size                = UDim2.new(1, -24, 1, -100),
+		Position            = UDim2.new(0, 12, 0, 90),
+		BackgroundTransparency = 1,
+		CanvasSize          = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness  = 6,
+		ZIndex              = 20,
+	}, panel)
+	make("UIGridLayout", {
+		CellSize    = UDim2.new(0, 172, 0, 212),
+		CellPadding = UDim2.new(0, 10, 0, 10),
+		SortOrder   = Enum.SortOrder.LayoutOrder,
+	}, scroll)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingTop = UDim.new(0, 6) }, scroll)
+
+	local foodCardUpdate: { [string]: () -> () } = {}
+
+	for idx, food in ipairs(GameConfig.Foods) do
+		local card = makeFrame({
+			BackgroundColor3 = Color3.fromRGB(255, 252, 244),
+			LayoutOrder      = idx,
+			ZIndex           = 20,
+		}, scroll)
+		corner(12, card)
+		local stroke = make("UIStroke", { Color = Color3.fromRGB(205, 180, 120), Thickness = 2.5 }, card)
+
+		makeLabel(food.emoji .. " " .. food.displayName, {
+			Size           = UDim2.new(1, -10, 0, 26),
+			Position       = UDim2.new(0, 6, 0, 8),
+			TextColor3     = Color3.fromRGB(52, 36, 12),
+			Font           = Enum.Font.FredokaOne,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			ZIndex         = 21,
+		}, card)
+
+		-- 효과 설명
+		local effParts = { ("케어 보상 x%.1f"):format(food.rewardMult) }
+		if food.extraClean > 0 then
+			table.insert(effParts, "엉킴·때 -" .. food.extraClean)
+		end
+		if food.woolBonus > 0 then
+			table.insert(effParts, "양털 +" .. food.woolBonus)
+		end
+		makeLabel(table.concat(effParts, "\n"), {
+			Size           = UDim2.new(1, -12, 0, 60),
+			Position       = UDim2.new(0, 6, 0, 38),
+			TextColor3     = Color3.fromRGB(96, 74, 40),
+			Font           = Enum.Font.Gotham,
+			TextWrapped    = true,
+			TextScaled     = false,
+			TextSize       = 14,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			ZIndex         = 21,
+		}, card)
+
+		local countLabel = makeLabel("", {
+			Size           = UDim2.new(1, -12, 0, 18),
+			Position       = UDim2.new(0, 6, 0, 104),
+			TextColor3     = Color3.fromRGB(120, 96, 56),
+			Font           = Enum.Font.GothamMedium,
+			TextScaled     = false,
+			TextSize       = 14,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			ZIndex         = 21,
+		}, card)
+
+		local selectBtn = makeButton("사용하기", Color3.fromRGB(120, 150, 200), {
+			Size     = UDim2.new(1, -12, 0, 32),
+			Position = UDim2.new(0, 6, 1, -74),
+			ZIndex   = 21,
+		}, card)
+		corner(8, selectBtn)
+
+		local buyBtn = makeButton("", Color3.fromRGB(86, 165, 84), {
+			Size     = UDim2.new(1, -12, 0, 32),
+			Position = UDim2.new(0, 6, 1, -38),
+			ZIndex   = 21,
+		}, card)
+		corner(8, buyBtn)
+
+		local function update()
+			local owned = (data and data.foods and data.foods[food.id]) or 0
+			local selected = data ~= nil and data.selectedFood == food.id
+			if food.price <= 0 then
+				countLabel.Text = "기본 제공 · 무제한"
+			else
+				countLabel.Text = "보유 " .. owned .. "개"
+			end
+			if selected then
+				selectBtn.Text             = "✓ 사용 중"
+				selectBtn.BackgroundColor3 = Color3.fromRGB(86, 165, 84)
+				stroke.Color               = Color3.fromRGB(86, 165, 84)
+			else
+				selectBtn.Text             = "사용하기"
+				selectBtn.BackgroundColor3 = Color3.fromRGB(120, 150, 200)
+				stroke.Color               = Color3.fromRGB(205, 180, 120)
+			end
+		end
+		foodCardUpdate[food.id] = update
+		update()
+
+		if food.price <= 0 then
+			buyBtn.Text            = "무료 제공"
+			buyBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 142)
+			buyBtn.AutoButtonColor = false
+		else
+			buyBtn.Text = "💰 " .. formatMoney(food.price)
+			buyBtn.Activated:Connect(function()
+				playSound(GameConfig.Sounds.click)
+				Remotes.Event("RequestBuyFood"):FireServer(food.id)
+			end)
+		end
+
+		selectBtn.Activated:Connect(function()
+			playSound(GameConfig.Sounds.click)
+			Remotes.Event("RequestSelectFood"):FireServer(food.id)
+		end)
+	end
+
+	local function refreshFood()
+		for _, fn in pairs(foodCardUpdate) do
+			fn()
+		end
+	end
+	refreshFoodPanel = refreshFood
+
+	Remotes.Event("OpenFoodShop").OnClientEvent:Connect(function()
+		closeAllPanels()
+		foodFrame.Visible = true
+		refreshFood()
+	end)
+end -- 먹이 상점 블록 끝
+
+-- ======================================================================
+-- 악세사리 가게 패널 (구매 → 보유 악세사리 선택 → 알파카 골라 입히기)
+-- ======================================================================
+do
+	local panel = makePanelBase("🎀 악세사리 가게")
+	accFrame = panel
+
+	local selectedAccId: string? = nil -- nil=미선택, ""=벗기기, 그 외=accId
+
+	-- 현재 선택 안내 라벨
+	local selLabel = makeLabel("", {
+		Size           = UDim2.new(1, -24, 0, 22),
+		Position       = UDim2.new(0, 12, 0, 62),
+		TextColor3     = Color3.fromRGB(150, 70, 120),
+		Font           = Enum.Font.GothamBold,
+		TextScaled     = false,
+		TextSize       = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex         = 21,
+	}, panel)
+
+	-- 악세사리 카드 그리드
+	local accScroll = make("ScrollingFrame", {
+		Size                = UDim2.new(1, -24, 0, 224),
+		Position            = UDim2.new(0, 12, 0, 88),
+		BackgroundTransparency = 1,
+		CanvasSize          = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness  = 6,
+		ZIndex              = 20,
+	}, panel)
+	make("UIGridLayout", {
+		CellSize    = UDim2.new(0, 128, 0, 98),
+		CellPadding = UDim2.new(0, 8, 0, 8),
+		SortOrder   = Enum.SortOrder.LayoutOrder,
+	}, accScroll)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 4), PaddingTop = UDim.new(0, 4) }, accScroll)
+
+	makeLabel("👇 입힐(또는 벗길) 알파카를 고르세요", {
+		Size           = UDim2.new(1, -24, 0, 22),
+		Position       = UDim2.new(0, 12, 0, 320),
+		TextColor3     = Color3.fromRGB(110, 86, 50),
+		Font           = Enum.Font.GothamBold,
+		TextScaled     = false,
+		TextSize       = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex         = 21,
+	}, panel)
+
+	-- 알파카 목록
+	local listScroll = make("ScrollingFrame", {
+		Size                = UDim2.new(1, -24, 1, -358),
+		Position            = UDim2.new(0, 12, 0, 346),
+		BackgroundColor3    = Color3.fromRGB(248, 240, 224),
+		BorderSizePixel     = 0,
+		CanvasSize          = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness  = 6,
+		ZIndex              = 20,
+	}, panel)
+	corner(10, listScroll)
+	make("UIListLayout", {
+		Padding   = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, listScroll)
+	make("UIPadding", {
+		PaddingLeft   = UDim.new(0, 8),
+		PaddingRight  = UDim.new(0, 8),
+		PaddingTop    = UDim.new(0, 8),
+		PaddingBottom = UDim.new(0, 8),
+	}, listScroll)
+
+	local accCardUpdate: { [string]: () -> () } = {}
+	local refreshAcc: () -> ()
+
+	-- 카드 하나 생성 (id="" 이면 '벗기기' 특수 카드)
+	local function makeAccCard(order: number, id: string, emoji: string, name: string, price: number?)
+		local card = makeFrame({
+			BackgroundColor3 = Color3.fromRGB(255, 250, 244),
+			LayoutOrder      = order,
+			ZIndex           = 20,
+		}, accScroll)
+		corner(10, card)
+		local stroke = make("UIStroke", { Color = Color3.fromRGB(220, 180, 205), Thickness = 2 }, card)
+
+		makeLabel(emoji .. " " .. name, {
+			Size        = UDim2.new(1, -8, 0, 36),
+			Position    = UDim2.new(0, 4, 0, 4),
+			TextColor3  = Color3.fromRGB(60, 40, 40),
+			Font        = Enum.Font.GothamBold,
+			TextWrapped = true,
+			TextScaled  = false,
+			TextSize    = 14,
+			ZIndex      = 21,
+		}, card)
+
+		local actionBtn = makeButton("", Color3.fromRGB(120, 150, 200), {
+			Size     = UDim2.new(1, -8, 0, 30),
+			Position = UDim2.new(0, 4, 1, -34),
+			ZIndex   = 21,
+		}, card)
+		corner(8, actionBtn)
+
+		local function update()
+			if id == "" then
+				-- 벗기기 카드: 항상 선택 가능
+				if selectedAccId == "" then
+					actionBtn.Text             = "✓ 선택됨"
+					actionBtn.BackgroundColor3 = Color3.fromRGB(198, 110, 90)
+					stroke.Color               = Color3.fromRGB(198, 110, 90)
+				else
+					actionBtn.Text             = "벗기기"
+					actionBtn.BackgroundColor3 = Color3.fromRGB(150, 120, 120)
+					stroke.Color               = Color3.fromRGB(220, 180, 205)
+				end
+				return
+			end
+			local owned = data ~= nil and data.accessories and data.accessories[id] == true
+			if not owned then
+				actionBtn.Text             = "💰 " .. formatMoney(price or 0)
+				actionBtn.BackgroundColor3 = Color3.fromRGB(86, 165, 84)
+				stroke.Color               = Color3.fromRGB(220, 180, 205)
+			elseif selectedAccId == id then
+				actionBtn.Text             = "✓ 선택됨"
+				actionBtn.BackgroundColor3 = Color3.fromRGB(86, 165, 84)
+				stroke.Color               = Color3.fromRGB(86, 165, 84)
+			else
+				actionBtn.Text             = "입히기 선택"
+				actionBtn.BackgroundColor3 = Color3.fromRGB(120, 150, 200)
+				stroke.Color               = Color3.fromRGB(220, 180, 205)
+			end
+		end
+		accCardUpdate[id] = update
+
+		actionBtn.Activated:Connect(function()
+			playSound(GameConfig.Sounds.click)
+			if id == "" then
+				selectedAccId = ""
+				refreshAcc()
+				return
+			end
+			local owned = data ~= nil and data.accessories and data.accessories[id] == true
+			if not owned then
+				Remotes.Event("RequestBuyAccessory"):FireServer(id)
+			else
+				selectedAccId = id
+				refreshAcc()
+			end
+		end)
+	end
+
+	-- '벗기기' 카드 먼저, 그다음 악세사리들
+	makeAccCard(0, "", "🚫", "벗기기", nil)
+	for i, acc in ipairs(GameConfig.Accessories) do
+		makeAccCard(i, acc.id, acc.emoji, acc.displayName, acc.price)
+	end
+
+	-- 선택 라벨 + 카드 + 알파카 목록 갱신
+	refreshAcc = function()
+		if selectedAccId == nil then
+			selLabel.Text = "구매한 악세사리를 골라 알파카에 입혀보세요."
+		elseif selectedAccId == "" then
+			selLabel.Text = "선택: 🚫 벗기기"
+		else
+			local a = GameConfig.AccessoriesById[selectedAccId]
+			selLabel.Text = "선택: " .. ((a and (a.emoji .. " " .. a.displayName)) or "?")
+		end
+
+		for _, fn in pairs(accCardUpdate) do
+			fn()
+		end
+
+		-- 목록 비우고 재생성
+		for _, ch in ipairs(listScroll:GetChildren()) do
+			if ch:IsA("TextButton") or ch:IsA("TextLabel") then
+				ch:Destroy()
+			end
+		end
+		local alpacas = (data and data.alpacas) or {}
+		if #alpacas == 0 then
+			makeLabel("농장에 알파카가 없어요. 먼저 알파카를 입양하세요!", {
+				Size       = UDim2.new(1, -16, 0, 30),
+				LayoutOrder = 1,
+				TextColor3 = Color3.fromRGB(140, 110, 70),
+				Font       = Enum.Font.Gotham,
+				TextScaled = false,
+				TextSize   = 15,
+				ZIndex     = 21,
+			}, listScroll)
+			return
+		end
+		for i, rec in ipairs(alpacas) do
+			local def = GameConfig.AlpacasById[rec.defId]
+			local species = (def and def.displayName) or rec.defId
+			local nm = (rec.name and rec.name ~= "" and rec.name) or species
+			local wearing = "없음"
+			if rec.accessory then
+				local a = GameConfig.AccessoriesById[rec.accessory]
+				wearing = (a and (a.emoji .. " " .. a.displayName)) or "없음"
+			end
+			local row = makeButton(("🦙 %s   ·   착용: %s"):format(nm, wearing), Color3.fromRGB(150, 120, 180), {
+				Size           = UDim2.new(1, 0, 0, 38),
+				LayoutOrder    = i,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextScaled     = false,
+				TextSize       = 16,
+				ZIndex         = 21,
+			}, listScroll)
+			corner(8, row)
+			make("UIPadding", { PaddingLeft = UDim.new(0, 10) }, row)
+			row.Activated:Connect(function()
+				playSound(GameConfig.Sounds.click)
+				if selectedAccId == nil then
+					showToast("위에서 악세사리 또는 '벗기기'를 먼저 선택하세요")
+					return
+				end
+				Remotes.Event("RequestEquipAccessory"):FireServer(rec.uid, selectedAccId)
+			end)
+		end
+	end
+
+	refreshAccPanel = refreshAcc
+	refreshAcc()
+
+	Remotes.Event("OpenAccessoryShop").OnClientEvent:Connect(function()
+		closeAllPanels()
+		accFrame.Visible = true
+		refreshAcc()
+	end)
+end -- 악세사리 가게 블록 끝
 
 -- ======================================================================
 -- 도감 패널
@@ -965,6 +1387,13 @@ Remotes.Event("PlayerDataUpdated").OnClientEvent:Connect(function(newData: any)
 	-- 상점이 열려있으면 슬롯 확장 버튼 텍스트도 갱신
 	if shopFrame and shopFrame.Visible and updateShopSlotBtn then
 		updateShopSlotBtn()
+	end
+	-- 먹이/악세사리 패널이 열려있으면 보유 수량·착용 상태 갱신
+	if foodFrame and foodFrame.Visible and refreshFoodPanel then
+		refreshFoodPanel()
+	end
+	if accFrame and accFrame.Visible and refreshAccPanel then
+		refreshAccPanel()
 	end
 end)
 

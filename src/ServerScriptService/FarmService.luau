@@ -106,10 +106,14 @@ function FarmService.spawnAlpaca(player: Player, record: DataManager.AlpacaRecor
 		happiness = record.happiness,
 		wool = record.wool,
 		name = record.name,
+		accessory = record.accessory,
 	})
 	model:SetAttribute("SlotIndex", slotIndex)
 	model:SetAttribute("HomeX", slotCF.Position.X)
 	model:SetAttribute("HomeZ", slotCF.Position.Z)
+	-- 굶주림 사망 타이머 기준: 스폰/접속 시점을 "마지막 먹인 시각"으로 초기화한다.
+	-- (오프라인 방치로는 죽지 않게 하기 위함 — 접속 중에만 카운트)
+	model:SetAttribute("Fed", os.time())
 	model.Parent = plot.alpacasFolder
 	AlpacaSpawner.placeOnGround(model, slotCF)
 	return model

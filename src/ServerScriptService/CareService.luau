@@ -39,6 +39,95 @@ local function notify(player: Player, message: string, isError: boolean?)
 	Remotes.Event("Notify"):FireClient(player, message, isError)
 end
 
+-- 알파카 표시 이름 (별명 우선, 없으면 종 이름)
+local function displayNameOf(model: Model): string
+	local nick = model:GetAttribute("Nickname") :: string?
+	if nick and nick ~= "" then
+		return nick
+	end
+	local alpacaId = model:GetAttribute("AlpacaId") :: string?
+	local def = alpacaId and GameConfig.AlpacasById[alpacaId]
+	return (def and def.displayName) or "알파카"
+end
+
+-- 굶주림 사망 연출: 모델 위치에 잠깐 빌보드를 띄웠다가 사라지게 함
+local function spawnDeathPoof(model: Model)
+	local ok, pivot = pcall(function()
+		return model:GetPivot()
+	end)
+	if not ok then
+		return
+	end
+	local anchor = Instance.new("Part")
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.Transparency = 1
+	anchor.Size = Vector3.new(1, 1, 1)
+	anchor.CFrame = pivot + Vector3.new(0, 3, 0)
+	anchor.Parent = workspace
+
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.fromScale(7, 3)
+	gui.AlwaysOnTop = true
+	gui.Adornee = anchor
+	gui.Parent = anchor
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.fromScale(1, 1)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = "💀 떠났어요…"
+	lbl.Font = Enum.Font.FredokaOne
+	lbl.TextScaled = true
+	lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+	lbl.TextStrokeTransparency = 0.2
+	lbl.Parent = gui
+
+	game:GetService("Debris"):AddItem(anchor, 2.5)
+end
+
+-- 굶주림 사망 처리: 연출 + 데이터/모델 제거(슬롯 비움) + 알림
+local function handleStarveDeath(player: Player, model: Model)
+	local uid = model:GetAttribute("Uid") :: string?
+	local name = displayNameOf(model)
+	spawnDeathPoof(model)
+	if uid then
+		DataManager.removeAlpaca(player, uid)
+		debounceMap[uid] = nil
+	end
+	model:Destroy()
+	notify(player, "😢 " .. name .. "(이)가 굶주려 떠났어요… 먹이를 제때 주세요!", true)
+end
+
+-- 먹이주기 효과 적용: 선택한 먹이를 1개 소비하고 효과(추가 정돈·양털 보너스)를 적용한다.
+-- 인벤토리가 비면 기본 먹이로 대체. 반환값은 케어 보상 배수.
+local function applyFeedFood(player: Player, model: Model, def: any): number
+	local selected = DataManager.getSelectedFood(player)
+	local foodDef = GameConfig.FoodsById[selected] or GameConfig.FoodsById[GameConfig.DefaultFood]
+	-- 기본 먹이가 아니면 재고 1개 소비, 소진 시 기본 먹이로 대체
+	if foodDef and foodDef.id ~= GameConfig.DefaultFood then
+		if not DataManager.consumeFood(player, foodDef.id) then
+			foodDef = GameConfig.FoodsById[GameConfig.DefaultFood]
+		end
+	end
+	if not foodDef then
+		return 1
+	end
+	-- 추가 정돈: 엉킴/더러움 함께 감소
+	if foodDef.extraClean > 0 then
+		local t = (model:GetAttribute("Tangle") :: number?) or 0
+		local d = (model:GetAttribute("Dirt") :: number?) or 0
+		model:SetAttribute("Tangle", math.max(0, t - foodDef.extraClean))
+		model:SetAttribute("Dirt", math.max(0, d - foodDef.extraClean))
+	end
+	-- 양털 보너스: 즉시 적립(상한 적용)
+	if foodDef.woolBonus > 0 then
+		local cur = (model:GetAttribute("Wool") :: number?) or 0
+		local cap = def.woolValue * GameConfig.Wool.capCycles
+		model:SetAttribute("Wool", math.min(cap, cur + foodDef.woolBonus))
+	end
+	return foodDef.rewardMult
+end
+
 -- 욕구 누적 루프 (init 에서 task.spawn 으로 실행)
 local function needAccumulateLoop()
 	local tickInterval = GameConfig.Care.tickInterval
@@ -77,6 +166,26 @@ local function needAccumulateLoop()
 
 				-- 시각 갱신 (욕구 임계치 경계에 관계없이 매 틱 호출)
 				AlpacaSpawner.updateVisual(model, h, t, d)
+
+				-- 굶주림(먹이 안 줌) 사망/경고 체크 — "Fed"(마지막 먹인 시각) 기준
+				local fedAt = model:GetAttribute("Fed") :: number?
+				if not fedAt then
+					-- 구버전 모델 방어: 기준 시각이 없으면 지금으로 초기화
+					model:SetAttribute("Fed", os.time())
+				else
+					local starved = os.time() - fedAt
+					if starved >= GameConfig.Care.starveDeathTime then
+						handleStarveDeath(player, model)
+						continue
+					elseif starved >= GameConfig.Care.starveWarnTime and model:GetAttribute("StarveWarned") ~= true then
+						model:SetAttribute("StarveWarned", true)
+						notify(
+							player,
+							"🦙 " .. displayNameOf(model) .. "(이)가 너무 배고파요! 먹이를 주지 않으면 곧 떠나요.",
+							true
+						)
+					end
+				end
 			end
 		end
 	end
@@ -135,7 +244,25 @@ local function onRequestCare(player: Player, uid: unknown, careType: unknown)
 	-- 검증 통과: 해당 욕구 속성 초기화
 	model:SetAttribute(needKey, 0)
 
-	-- 초기화 후 나머지 욕구 값으로 행복도 재계산
+	-- 보상 계산용 종 정보 먼저 확보
+	local alpacaId = model:GetAttribute("AlpacaId") :: string?
+	if not alpacaId then
+		return
+	end
+	local def = GameConfig.AlpacasById[alpacaId]
+	if not def then
+		return
+	end
+
+	-- 먹이주기: 선택한 먹이 소비 + 효과 적용 + 굶주림 사망 타이머 리셋
+	local foodMult = 1
+	if careType == "feed" then
+		foodMult = applyFeedFood(player, model, def)
+		model:SetAttribute("Fed", os.time())
+		model:SetAttribute("StarveWarned", false)
+	end
+
+	-- (먹이 효과로 Tangle/Dirt 가 바뀌었을 수 있으니) 최신 값으로 행복도 재계산
 	local h = (model:GetAttribute("Hunger")  :: number?) or 0
 	local t = (model:GetAttribute("Tangle")  :: number?) or 0
 	local d = (model:GetAttribute("Dirt")    :: number?) or 0
@@ -145,17 +272,9 @@ local function onRequestCare(player: Player, uid: unknown, careType: unknown)
 	-- 시각 갱신
 	AlpacaSpawner.updateVisual(model, h, t, d)
 
-	-- 보상 계산
-	local alpacaId = model:GetAttribute("AlpacaId") :: string?
-	if not alpacaId then
-		return
-	end
-	local def = GameConfig.AlpacasById[alpacaId]
-	if not def then
-		return
-	end
+	-- 보상 계산 (먹이 보상 배수 foodMult 반영 — 먹이주기에만 1 이외 값)
 	local mult = (DataManager.hasIncomeBoost(player) and GameConfig.Monetization.incomeBoost.multiplier) or 1
-	local reward = math.floor(def.careReward * mult * GameConfig.Economy.moneyMultiplier)
+	local reward = math.floor(def.careReward * mult * GameConfig.Economy.moneyMultiplier * foodMult)
 
 	DataManager.addMoney(player, reward)
 	DataManager.incrementCareCount(player)
@@ -173,6 +292,14 @@ function CareService.init()
 
 	-- 케어 요청 이벤트 연결
 	Remotes.Event("RequestCare").OnServerEvent:Connect(onRequestCare)
+
+	-- 퇴장 플레이어의 알파카 디바운스 항목 정리(장기 운영 시 메모리 누수 방지).
+	-- DataManager.init() 이 가장 마지막에 연결되므로 이 시점엔 캐시(getAlpacas)가 아직 살아있다.
+	Players.PlayerRemoving:Connect(function(player)
+		for _, rec in ipairs(DataManager.getAlpacas(player)) do
+			debounceMap[rec.uid] = nil
+		end
+	end)
 end
 
 return CareService

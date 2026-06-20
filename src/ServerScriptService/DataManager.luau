@@ -64,6 +64,7 @@ export type AlpacaRecord = {
 	happiness: number,
 	wool: number,
 	name: string?, -- 플레이어가 지은 별명(없으면 종 이름 표시)
+	accessory: string?, -- 착용 중인 악세사리 id(없으면 nil)
 }
 
 export type PlayerData = {
@@ -73,6 +74,9 @@ export type PlayerData = {
 	dex: { [string]: boolean },
 	boosts: { incomeBoost: boolean },
 	stats: { totalEarned: number, careCount: number },
+	foods: { [string]: number }, -- 보유 먹이 개수 (foodId → 수량)
+	selectedFood: string, -- 현재 사용할 먹이 id
+	accessories: { [string]: boolean }, -- 보유 악세사리 (accId → true)
 }
 
 -- 세션 캐시: userId -> PlayerData
@@ -94,6 +98,9 @@ local function defaultData(): PlayerData
 		dex = {},
 		boosts = { incomeBoost = false },
 		stats = { totalEarned = 0, careCount = 0 },
+		foods = {},
+		selectedFood = GameConfig.DefaultFood,
+		accessories = {},
 	}
 end
 
@@ -124,6 +131,8 @@ local function reconcileAlpaca(raw: any): AlpacaRecord?
 		happiness = num(raw.happiness, 100, 0, 100),
 		wool = math.max(0, tonumber(raw.wool) or 0),
 		name = (type(raw.name) == "string" and raw.name ~= "" and raw.name) or nil,
+		accessory = (type(raw.accessory) == "string" and GameConfig.AccessoriesById[raw.accessory] and raw.accessory)
+			or nil,
 	}
 end
 
@@ -160,6 +169,24 @@ local function reconcile(raw: any): PlayerData
 	if type(raw.stats) == "table" then
 		data.stats.totalEarned = tonumber(raw.stats.totalEarned) or 0
 		data.stats.careCount = tonumber(raw.stats.careCount) or 0
+	end
+	if type(raw.foods) == "table" then
+		for id, qty in pairs(raw.foods) do
+			local n = tonumber(qty)
+			if GameConfig.FoodsById[id] and n and n > 0 then
+				data.foods[id] = math.floor(n)
+			end
+		end
+	end
+	if type(raw.selectedFood) == "string" and GameConfig.FoodsById[raw.selectedFood] then
+		data.selectedFood = raw.selectedFood
+	end
+	if type(raw.accessories) == "table" then
+		for id, v in pairs(raw.accessories) do
+			if GameConfig.AccessoriesById[id] and v == true then
+				data.accessories[id] = true
+			end
+		end
 	end
 	return data
 end
@@ -459,6 +486,115 @@ function DataManager.incrementCareCount(player: Player)
 	if data then
 		data.stats.careCount += 1
 	end
+end
+
+-- =====================================================================
+-- 먹이 인벤토리
+-- =====================================================================
+function DataManager.getFoods(player: Player): { [string]: number }
+	local data = cache[player.UserId]
+	return (data and data.foods) or {}
+end
+
+function DataManager.getFoodCount(player: Player, foodId: string): number
+	local data = cache[player.UserId]
+	return (data and data.foods[foodId]) or 0
+end
+
+function DataManager.getSelectedFood(player: Player): string
+	local data = cache[player.UserId]
+	return (data and data.selectedFood) or GameConfig.DefaultFood
+end
+
+-- 먹이 n개 추가. 성공 여부 반환. (가격/머니 검증은 상점 서비스에서 처리)
+function DataManager.addFood(player: Player, foodId: string, qty: number): boolean
+	local data = cache[player.UserId]
+	if not data or not GameConfig.FoodsById[foodId] or qty <= 0 then
+		return false
+	end
+	data.foods[foodId] = (data.foods[foodId] or 0) + math.floor(qty)
+	DataManager.pushToClient(player)
+	return true
+end
+
+-- 먹이 1개 소비. 재고가 있으면 차감 후 true, 없으면 false.
+-- 기본 먹이(grass 등 price 0)는 무한이므로 소비 대상이 아니다 → 항상 false 취급은 곤란하니
+-- 호출부에서 기본 먹이는 consume 하지 않도록 한다(여기선 실제 재고만 다룸).
+function DataManager.consumeFood(player: Player, foodId: string): boolean
+	local data = cache[player.UserId]
+	if not data then
+		return false
+	end
+	local have = data.foods[foodId] or 0
+	if have <= 0 then
+		return false
+	end
+	have -= 1
+	if have <= 0 then
+		data.foods[foodId] = nil
+		-- 마지막 한 개를 소진했고 그게 '사용 중' 먹이였다면 기본 먹이로 되돌려
+		-- 클라 UI 가 '보유 0개 + 사용 중' 으로 어긋나는 것을 막는다.
+		if data.selectedFood == foodId then
+			data.selectedFood = GameConfig.DefaultFood
+		end
+	else
+		data.foods[foodId] = have
+	end
+	DataManager.pushToClient(player)
+	return true
+end
+
+-- 사용할 먹이 선택. 보유 중이 아니어도 기본 먹이는 선택 가능.
+function DataManager.setSelectedFood(player: Player, foodId: string): boolean
+	local data = cache[player.UserId]
+	if not data or not GameConfig.FoodsById[foodId] then
+		return false
+	end
+	if data.selectedFood ~= foodId then
+		data.selectedFood = foodId
+		DataManager.pushToClient(player)
+	end
+	return true
+end
+
+-- =====================================================================
+-- 악세사리
+-- =====================================================================
+function DataManager.getAccessories(player: Player): { [string]: boolean }
+	local data = cache[player.UserId]
+	return (data and data.accessories) or {}
+end
+
+function DataManager.hasAccessory(player: Player, accId: string): boolean
+	local data = cache[player.UserId]
+	return data ~= nil and data.accessories[accId] == true
+end
+
+function DataManager.addAccessory(player: Player, accId: string): boolean
+	local data = cache[player.UserId]
+	if not data or not GameConfig.AccessoriesById[accId] then
+		return false
+	end
+	if data.accessories[accId] then
+		return false
+	end
+	data.accessories[accId] = true
+	DataManager.pushToClient(player)
+	return true
+end
+
+-- 알파카에 악세사리 장착/해제(accId=nil 이면 해제). 성공 여부 반환.
+function DataManager.setAlpacaAccessory(player: Player, uid: string, accId: string?): boolean
+	local rec = DataManager.getAlpacaByUid(player, uid)
+	if not rec then
+		return false
+	end
+	if accId ~= nil and not GameConfig.AccessoriesById[accId] then
+		return false
+	end
+	rec.accessory = accId
+	DataManager.pushToClient(player)
+	return true
 end
 
 -- =====================================================================

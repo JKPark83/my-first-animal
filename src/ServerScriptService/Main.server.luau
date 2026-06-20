@@ -80,12 +80,14 @@ Players.PlayerAdded:Connect(function(player)
 end)
 
 -- =====================================================================
--- 가게 패드 진입 → 상점 열기 신호
+-- 가게/먹이상점/악세사리가게 패드 진입 → 각 상점 열기 신호
 -- =====================================================================
-local shopPad = FarmBuilder.getShopPad()
-if shopPad then
+local function connectShopPad(pad: BasePart?, eventName: string)
+	if not pad then
+		return
+	end
 	local lastOpen: { [number]: number } = {}
-	shopPad.Touched:Connect(function(hit)
+	pad.Touched:Connect(function(hit)
 		local character = hit:FindFirstAncestorOfClass("Model")
 		if not character then
 			return
@@ -99,9 +101,13 @@ if shopPad then
 			return
 		end
 		lastOpen[player.UserId] = now
-		Remotes.Event("OpenShopRequest"):FireClient(player)
+		Remotes.Event(eventName):FireClient(player)
 	end)
 end
+
+connectShopPad(FarmBuilder.getShopPad(), "OpenShopRequest")
+connectShopPad(FarmBuilder.getFoodPad(), "OpenFoodShop")
+connectShopPad(FarmBuilder.getAccessoryPad(), "OpenAccessoryShop")
 
 -- =====================================================================
 -- 초기 데이터 요청 (클라 부팅 시)

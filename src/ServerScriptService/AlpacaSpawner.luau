@@ -30,6 +30,7 @@ export type SpawnArgs = {
 	happiness: number,
 	wool: number,
 	name: string?,
+	accessory: string?, -- 착용 악세사리 id(없으면 nil)
 }
 
 -- 기준 치수(scale=1). 모든 값에 def.scale 을 곱함.
@@ -201,7 +202,115 @@ function AlpacaSpawner.build(args: SpawnArgs): Model
 	AlpacaSpawner.setNickname(model, args.name)
 
 	AlpacaSpawner.updateVisual(model, args.hunger, args.tangle, args.dirt)
+	AlpacaSpawner.applyAccessory(model, args.accessory)
 	return model
+end
+
+-- 알파카에 악세사리(옷/장신구) 파트를 부착/교체.
+-- 기존 "AccessoryDecor" 폴더를 지우고 accId 의 kind 에 맞춰 새로 조립한다.
+-- accId 가 nil/"" 이면 벗긴다. 모든 파트는 Anchored=true 라 모델 PivotTo 이동을 따라간다.
+function AlpacaSpawner.applyAccessory(model: Model, accId: string?)
+	local old = model:FindFirstChild("AccessoryDecor")
+	if old then
+		old:Destroy()
+	end
+	model:SetAttribute("Accessory", accId or "")
+	if not accId or accId == "" then
+		return
+	end
+	local acc = GameConfig.AccessoriesById[accId]
+	if not acc then
+		return
+	end
+
+	local alpacaId = model:GetAttribute("AlpacaId") :: string?
+	local def = (alpacaId and GameConfig.AlpacasById[alpacaId]) or nil
+	local s = (def and def.scale) or 1
+
+	local head = model:FindFirstChild("Head") :: BasePart?
+	local neck = model:FindFirstChild("Neck") :: BasePart?
+	local root = model.PrimaryPart
+	if not head or not root then
+		return
+	end
+
+	local folder = Instance.new("Folder")
+	folder.Name = "AccessoryDecor"
+	folder.Parent = model
+
+	local V3 = Vector3.new
+	local Block = Enum.PartType.Block
+	local Cyl = Enum.PartType.Cylinder
+	local Ball = Enum.PartType.Ball
+	local color = acc.color
+	local accent = acc.accent or acc.color
+
+	local function mk(name: string, shape: Enum.PartType, size: Vector3, baseCF: CFrame, relCF: CFrame, c: Color3, mat: Enum.Material)
+		local p = Instance.new("Part")
+		p.Name = name
+		p.Shape = shape
+		p.Anchored = true
+		p.CanCollide = false
+		p.Massless = true
+		p.Size = size
+		p.Color = c
+		p.Material = mat
+		p.TopSurface = Enum.SurfaceType.Smooth
+		p.BottomSurface = Enum.SurfaceType.Smooth
+		p.CFrame = baseCF * relCF
+		p.Parent = folder
+		return p
+	end
+
+	local headCF = head.CFrame
+	local half = HEAD * s * 0.5
+	local lay = CFrame.Angles(0, 0, math.rad(90)) -- 원기둥을 눕혀(원판이 위를 보게) 배치
+
+	if acc.kind == "hat" then
+		mk("AccBrim", Cyl, V3(0.3 * s, HEAD * 1.85 * s, HEAD * 1.85 * s), headCF, CFrame.new(0, half + 0.15 * s, 0) * lay, color, Enum.Material.Fabric)
+		mk("AccTop", Cyl, V3(HEAD * 0.7 * s, HEAD * 1.0 * s, HEAD * 1.0 * s), headCF, CFrame.new(0, half + 0.15 * s + HEAD * 0.35 * s, 0) * lay, color, Enum.Material.Fabric)
+		mk("AccBand", Cyl, V3(HEAD * 0.22 * s, HEAD * 1.06 * s, HEAD * 1.06 * s), headCF, CFrame.new(0, half + 0.2 * s, 0) * lay, accent, Enum.Material.SmoothPlastic)
+	elseif acc.kind == "tophat" then
+		mk("AccBrim", Cyl, V3(0.3 * s, HEAD * 1.7 * s, HEAD * 1.7 * s), headCF, CFrame.new(0, half + 0.15 * s, 0) * lay, color, Enum.Material.SmoothPlastic)
+		mk("AccBarrel", Cyl, V3(HEAD * 1.5 * s, HEAD * 1.05 * s, HEAD * 1.05 * s), headCF, CFrame.new(0, half + 0.15 * s + HEAD * 0.75 * s, 0) * lay, color, Enum.Material.SmoothPlastic)
+		mk("AccBand", Cyl, V3(HEAD * 0.26 * s, HEAD * 1.1 * s, HEAD * 1.1 * s), headCF, CFrame.new(0, half + 0.32 * s, 0) * lay, accent, Enum.Material.SmoothPlastic)
+	elseif acc.kind == "bow" then
+		local y = half + 0.25 * s
+		mk("AccBowL", Block, V3(HEAD * 0.55 * s, HEAD * 0.5 * s, 0.35 * s), headCF, CFrame.new(-HEAD * 0.45 * s, y, 0) * CFrame.Angles(0, 0, math.rad(22)), color, Enum.Material.SmoothPlastic)
+		mk("AccBowR", Block, V3(HEAD * 0.55 * s, HEAD * 0.5 * s, 0.35 * s), headCF, CFrame.new(HEAD * 0.45 * s, y, 0) * CFrame.Angles(0, 0, math.rad(-22)), color, Enum.Material.SmoothPlastic)
+		mk("AccBowKnot", Block, V3(HEAD * 0.28 * s, HEAD * 0.28 * s, 0.42 * s), headCF, CFrame.new(0, y, 0), accent, Enum.Material.SmoothPlastic)
+	elseif acc.kind == "scarf" then
+		local base = (neck and neck.CFrame) or headCF
+		mk("AccScarf", Block, V3(NECK_S * 2.4 * s, NECK_H * 0.26 * s, NECK_S * 2.4 * s), base, CFrame.new(0, -NECK_H * 0.28 * s, 0), color, Enum.Material.Fabric)
+		mk("AccScarfTail", Block, V3(NECK_S * 0.9 * s, NECK_H * 0.5 * s, 0.35 * s), base, CFrame.new(0, -NECK_H * 0.5 * s, -NECK_S * 1.0 * s), accent, Enum.Material.Fabric)
+	elseif acc.kind == "glasses" then
+		local z = -(half + 0.08 * s)
+		mk("AccLensL", Block, V3(HEAD * 0.42 * s, HEAD * 0.34 * s, 0.18 * s), headCF, CFrame.new(-HEAD * 0.28 * s, 0.12 * s, z), color, Enum.Material.SmoothPlastic)
+		mk("AccLensR", Block, V3(HEAD * 0.42 * s, HEAD * 0.34 * s, 0.18 * s), headCF, CFrame.new(HEAD * 0.28 * s, 0.12 * s, z), color, Enum.Material.SmoothPlastic)
+		mk("AccBridge", Block, V3(HEAD * 0.24 * s, 0.12 * s, 0.16 * s), headCF, CFrame.new(0, 0.12 * s, z), accent, Enum.Material.SmoothPlastic)
+	elseif acc.kind == "flower" then
+		local y = half - 0.02 * s
+		local r = HEAD * 0.55 * s
+		for k = 0, 5 do
+			local a = math.rad(k * 60)
+			local c = (k % 2 == 0) and color or accent
+			mk("AccFlower", Ball, V3(HEAD * 0.42 * s, HEAD * 0.42 * s, HEAD * 0.42 * s), headCF, CFrame.new(math.sin(a) * r, y, math.cos(a) * r), c, Enum.Material.SmoothPlastic)
+		end
+	elseif acc.kind == "crown" then
+		local y = half + 0.38 * s
+		local r = HEAD * 0.42 * s
+		mk("AccCrownBand", Cyl, V3(0.28 * s, HEAD * 1.0 * s, HEAD * 1.0 * s), headCF, CFrame.new(0, half + 0.12 * s, 0) * lay, color, Enum.Material.Neon)
+		for k = 0, 5 do
+			local a = math.rad(k * 60)
+			mk("AccCrown", Block, V3(0.3 * s, HEAD * 0.7 * s, 0.3 * s), headCF, CFrame.new(math.sin(a) * r, y, math.cos(a) * r), color, Enum.Material.Neon)
+		end
+		mk("AccGem", Ball, V3(0.36 * s, 0.36 * s, 0.36 * s), headCF, CFrame.new(0, y, -r), accent, Enum.Material.Neon)
+	elseif acc.kind == "cape" then
+		local base = root.CFrame
+		mk("AccCapeTop", Block, V3(BODY_W * 1.05 * s, 0.3 * s, BODY_L * 0.85 * s), base, CFrame.new(0, BODY_H * 0.52 * s, 0), color, Enum.Material.Fabric)
+		mk("AccCapeBack", Block, V3(BODY_W * 1.0 * s, BODY_H * 0.95 * s, 0.3 * s), base, CFrame.new(0, BODY_H * 0.05 * s, BODY_L * 0.5 * s), color, Enum.Material.Fabric)
+		mk("AccCapeCollar", Block, V3(BODY_W * 0.6 * s, 0.42 * s, 0.5 * s), base, CFrame.new(0, BODY_H * 0.55 * s, -BODY_L * 0.4 * s), accent, Enum.Material.SmoothPlastic)
+	end
 end
 
 -- 발이 groundCFrame 위치에 닿도록 모델 배치 (방향은 groundCFrame 유지)

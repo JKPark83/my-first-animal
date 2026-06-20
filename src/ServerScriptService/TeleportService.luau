@@ -27,7 +27,7 @@ local TeleportService = {}
 
 -- target 문자열이 허용된 값인지 확인합니다.
 local function isValidTarget(target: unknown): boolean
-	return target == "shop" or target == "home"
+	return target == "shop" or target == "home" or target == "food" or target == "accessory"
 end
 
 -- RequestTeleport 이벤트 핸들러
@@ -58,6 +58,12 @@ local function onRequestTeleport(player: Player, target: unknown)
 	if target == "shop" then
 		-- 가게 패드 위(가게를 바라보는 위치)
 		cf = FarmBuilder.getShopTeleportCFrame()
+	elseif target == "food" then
+		-- 먹이 상점 패드 위
+		cf = FarmBuilder.getFoodTeleportCFrame()
+	elseif target == "accessory" then
+		-- 악세사리 가게 패드 위
+		cf = FarmBuilder.getAccessoryTeleportCFrame()
 	elseif target == "home" then
 		-- 플레이어 배정 농장 입구 스폰 위치
 		local plot = FarmBuilder.getPlotInfo(player)
