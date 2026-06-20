@@ -23,6 +23,7 @@ local DataManager = require(script.Parent.DataManager)
 local FarmService = require(script.Parent.FarmService)
 local CollectionService = require(script.Parent.CollectionService)
 local AlpacaSpawner = require(script.Parent.AlpacaSpawner)
+local CareService = require(script.Parent.CareService)
 
 local AlpacaShopService = {}
 
@@ -33,6 +34,12 @@ local AlpacaShopService = {}
 -- 클라이언트에 일반/오류 알림을 전송합니다.
 local function notify(player: Player, message: string, isError: boolean?)
 	Remotes.Event("Notify"):FireClient(player, message, isError)
+end
+
+-- 추가 소비재(먹이/악세사리) 구매 자격: 알파카를 최소 minAlpacasToShop 마리 보유해야 한다.
+-- (알파카 없이 돈을 다 써버려 더 이상 벌 수단이 없어지는 막다른 길 방지)
+local function hasMinAlpacas(player: Player): boolean
+	return #DataManager.getAlpacas(player) >= GameConfig.Economy.minAlpacasToShop
 end
 
 -- =====================================================================
@@ -225,6 +232,10 @@ function AlpacaShopService.init()
 			notify(player, food.displayName .. "은(는) 기본 제공이라 구매할 필요가 없어요.", true)
 			return
 		end
+		if not hasMinAlpacas(player) then
+			notify(player, "먼저 알파카를 입양해야 먹이를 살 수 있어요. 🦙", true)
+			return
+		end
 		if DataManager.getMoney(player) < food.price then
 			notify(player, "돈이 부족해요.", true)
 			return
@@ -276,6 +287,10 @@ function AlpacaShopService.init()
 		end
 		if DataManager.hasAccessory(player, accId) then
 			notify(player, "이미 보유한 악세사리예요.", true)
+			return
+		end
+		if not hasMinAlpacas(player) then
+			notify(player, "먼저 알파카를 입양해야 악세사리를 살 수 있어요. 🦙", true)
 			return
 		end
 		if DataManager.getMoney(player) < acc.price then
@@ -330,6 +345,106 @@ function AlpacaShopService.init()
 		end
 		local acc = GameConfig.AccessoriesById[accId]
 		notify(player, acc.emoji .. " " .. acc.displayName .. " 착용 완료!")
+	end)
+
+	-- ------------------------------------------------------------------
+	-- RequestSellFood : 보유 먹이 1개 되팔기 (원가의 sellRatio 환급)
+	-- ------------------------------------------------------------------
+	Remotes.Event("RequestSellFood").OnServerEvent:Connect(function(player: Player, foodId: unknown)
+		if not DataManager.isLoaded(player) then
+			return
+		end
+		if type(foodId) ~= "string" then
+			return
+		end
+		local food = GameConfig.FoodsById[foodId]
+		if not food then
+			notify(player, "존재하지 않는 먹이예요.", true)
+			return
+		end
+		if food.price <= 0 then
+			notify(player, food.displayName .. "은(는) 되팔 수 없어요.", true)
+			return
+		end
+		if DataManager.getFoodCount(player, foodId) <= 0 then
+			notify(player, "되팔 먹이가 없어요.", true)
+			return
+		end
+		-- 1개 차감 (마지막 한 개를 소진하면 consumeFood 가 선택 먹이를 기본 먹이로 되돌린다)
+		if not DataManager.consumeFood(player, foodId) then
+			notify(player, "되팔 먹이가 없어요.", true)
+			return
+		end
+		local refund = GameConfig.sellPrice(food.price)
+		DataManager.addMoney(player, refund)
+		notify(
+			player,
+			food.emoji .. " " .. food.displayName .. " 되팔기! +💰" .. refund
+				.. " (보유 " .. DataManager.getFoodCount(player, foodId) .. "개)"
+		)
+	end)
+
+	-- ------------------------------------------------------------------
+	-- RequestSellAccessory : 보유 악세사리 되팔기 (착용 중이면 자동 해제)
+	-- ------------------------------------------------------------------
+	Remotes.Event("RequestSellAccessory").OnServerEvent:Connect(function(player: Player, accId: unknown)
+		if not DataManager.isLoaded(player) then
+			return
+		end
+		if type(accId) ~= "string" then
+			return
+		end
+		local acc = GameConfig.AccessoriesById[accId]
+		if not acc then
+			notify(player, "존재하지 않는 악세사리예요.", true)
+			return
+		end
+		if not DataManager.hasAccessory(player, accId) then
+			notify(player, "보유하지 않은 악세사리예요.", true)
+			return
+		end
+		-- 보유 제거 + 착용 중이던 알파카들 자동 해제 → 영향받은 모델 외형 갱신
+		local affected = DataManager.removeAccessory(player, accId)
+		for _, uid in ipairs(affected) do
+			local model = FarmService.getModelByUid(player, uid)
+			if model then
+				AlpacaSpawner.applyAccessory(model, nil)
+			end
+		end
+		local refund = GameConfig.sellPrice(acc.price)
+		DataManager.addMoney(player, refund)
+		notify(player, acc.emoji .. " " .. acc.displayName .. " 되팔기! +💰" .. refund)
+	end)
+
+	-- ------------------------------------------------------------------
+	-- RequestSellAlpaca : 알파카 되팔기 (모델/데이터 제거, 슬롯 회수, 원가 80% 환급)
+	--   ⚠ 도감 기록은 유지(한 번이라도 보유했으면 발견으로 인정).
+	--   ⚠ 미수집 양털은 함께 사라지므로 클라 측에서 판매 전 확인을 받는다.
+	-- ------------------------------------------------------------------
+	Remotes.Event("RequestSellAlpaca").OnServerEvent:Connect(function(player: Player, uid: unknown)
+		if not DataManager.isLoaded(player) then
+			return
+		end
+		if type(uid) ~= "string" then
+			return
+		end
+		local rec = DataManager.getAlpacaByUid(player, uid)
+		if not rec then
+			return -- 본인 소유 알파카가 아니면 무시
+		end
+		local def = GameConfig.AlpacasById[rec.defId]
+		local refund = def and GameConfig.sellPrice(def.price) or 0
+		local name = (rec.name and rec.name ~= "" and rec.name) or (def and def.displayName) or "알파카"
+
+		-- 데이터 제거 → 모델 제거(슬롯 회수) → 디바운스 정리
+		DataManager.removeAlpaca(player, uid)
+		FarmService.removeAlpacaModel(player, uid)
+		CareService.clearDebounce(uid)
+
+		if refund > 0 then
+			DataManager.addMoney(player, refund)
+		end
+		notify(player, "👋 " .. name .. " 판매 완료! +💰" .. refund)
 	end)
 end
 

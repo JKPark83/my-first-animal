@@ -70,6 +70,17 @@
 | 시작 슬롯 | **3칸** | `startingSlots` |
 | 최대 슬롯 | **10칸** | `maxSlots` |
 | 수익 배수 | **×5** | `moneyMultiplier` — 케어 보상·양털 적립에 공통 적용 |
+| 되팔기 환급률 | **80%** | `sellRatio` — 먹이/악세사리/알파카 판매 시 원가의 80%를 돌려준다 (`GameConfig.sellPrice(price)=math.floor(price*0.8)`) |
+| 상점 이용 최소 알파카 | **1마리** | `minAlpacasToShop` — 먹이/악세사리 구매 자격 조건 |
+
+### 막다른 길 방지 규칙 (되팔기 · 구매 자격)
+알파카 없이 돈을 모두 써버려 더 이상 수익을 낼 수 없는 상황을 막기 위한 최소 안전장치.
+
+- **구매 자격**: 알파카를 **1마리 이상 보유**해야 먹이(유료)·악세사리를 살 수 있다(`minAlpacasToShop`). 0마리면 `RequestBuyFood`/`RequestBuyAccessory`가 거부되고 "먼저 알파카를 입양하세요" 알림이 뜬다. *무료 기본 먹이(풀)는 가격이 0이라 게이트와 무관하게 항상 사용 가능.*
+- **되팔기**: 보유한 **먹이·악세사리·알파카**를 원가의 **80%**(`sellRatio`)에 되팔 수 있다.
+  - 먹이(`RequestSellFood`): 보유 1개 차감 + 원가 80% 환급. 유료 먹이만 가능(가격 0인 기본 먹이는 불가). 사용 중이던 먹이의 마지막 1개를 팔면 자동으로 기본 먹이로 복귀.
+  - 악세사리(`RequestSellAccessory`): 보유 목록에서 제거 + 원가 80% 환급. 착용 중인 알파카가 있으면 **자동 해제**되고 해당 모델 외형이 즉시 갱신된다.
+  - 알파카(`RequestSellAlpaca`): 모델·데이터가 삭제되면서 **슬롯이 회수**되고 원가 80% 환급. **도감 기록은 유지**(한 번이라도 보유했으면 발견 인정)하지만, **모으던(미수집) 양털은 함께 사라진다** → 클라이언트에서 판매 전 확인 다이얼로그(`showConfirm`)로 경고한다.
 
 ### 슬롯 확장 비용
 4번째 칸부터 비용을 내고 확장한다. (1~3칸은 기본 제공)
@@ -350,8 +361,8 @@ netWorth = 보유 머니 + Σ(알파카 가격) + Σ(미수집 양털)
 
 **RemoteFunction**: `GetPlayerData` (클라 부팅 시 초기 데이터 요청, 최대 10초 폴링).
 
-**RemoteEvent — 클라 → 서버 (11개):**
-`RequestBuyAlpaca` · `RequestNameAlpaca` · `RequestExpandSlot` · `RequestCare` · `RequestCollectWool` · `RequestBuyGamePass` · `RequestTeleport` · `RequestBuyFood` · `RequestSelectFood` · `RequestBuyAccessory` · `RequestEquipAccessory`
+**RemoteEvent — 클라 → 서버 (14개):**
+`RequestBuyAlpaca` · `RequestNameAlpaca` · `RequestExpandSlot` · `RequestCare` · `RequestCollectWool` · `RequestBuyGamePass` · `RequestTeleport` · `RequestBuyFood` · `RequestSelectFood` · `RequestBuyAccessory` · `RequestEquipAccessory` · `RequestSellFood` · `RequestSellAccessory` · `RequestSellAlpaca`
 
 **RemoteEvent — 서버 → 클라 (9개):**
 `PlayerDataUpdated` · `CareFeedback` · `WoolCollected` · `LeaderboardUpdated` · `OpenShopRequest` · `PromptNameAlpaca` · `Notify` · `OpenFoodShop` · `OpenAccessoryShop`
@@ -360,7 +371,7 @@ netWorth = 보유 머니 + Σ(알파카 가격) + Σ(미수집 양털)
 
 ## 15. 이번 작업(개선) 요약
 
-이번 세션에서 추가한 4가지 기능:
+이번 세션에서 추가한 주요 기능:
 
 1. **악세사리 가게** — 알파카 옷 8종(밀짚모자~왕관)을 파는 전용 가게. 구매하면 보유 목록에 쌓이고, 악세사리 하나를 고른 뒤 농장의 특정 알파카를 선택해 입히거나 벗길 수 있다. 가게로 순간이동하는 `🎀 악세사리` 버튼을 제공하며, 악세사리 파츠는 알파카 모델에 부착돼 이동·AI 동작을 그대로 따라간다.
 2. **먹이 상점(인벤토리형)** — 먹이 5종(풀·당근·건초·프리미엄·매직)을 판매하며, 종마다 가격·케어 보상 배수·정돈 효과·양털 보너스가 다르다. 먹이를 사면 개수가 쌓이고, '사용 먹이'를 고르면 먹이주기마다 1개씩 소비되며 재고가 떨어지면 무료 기본 먹이(풀)로 자동 대체된다. `🍽️ 먹이상점` 순간이동 버튼 제공.
@@ -368,6 +379,8 @@ netWorth = 보유 머니 + Σ(알파카 가격) + Σ(미수집 양털)
 4. **빗질·목욕 동작** — 빗질/목욕 시 캐릭터가 실제로 팔을 움직인다. R15 어깨 관절(`Motor6D.Transform`)을 매 프레임 덮어쓰는 절차적 애니메이션이며(빗질=한 팔, 목욕=양 팔), R6 캐릭터는 R15 팔이 없어 기존 이모트로 대체된다.
 
 이후 적대적 코드리뷰로 발견한 보강 사항: 먹이 소진 시 사용 먹이 자동 복귀, 미보유 유료 먹이 선택 차단, 먹이주기 시 진행 중이던 빗질/목욕 동작 즉시 취소, 퇴장 시 디바운스 항목 정리, 세 상점 팝업 모두 패드 이탈 시 자동 닫힘.
+
+5. **막다른 길 방지 경제(되팔기·구매 자격)** — 알파카 없이 자금을 모두 소진해 수익원이 사라지는 상황을 막는 안전장치. ① 먹이·악세사리 구매는 **알파카 1마리 이상 보유** 시에만 가능하다(`minAlpacasToShop`). ② 보유한 먹이·악세사리·알파카를 **원가의 80%**(`sellRatio`)에 되팔 수 있다. 알파카를 팔면 슬롯이 회수되고 도감 기록은 남되 미수집 양털은 사라지므로, 클라이언트에서 확인 다이얼로그로 경고한다. 악세사리를 팔면 착용 중이던 알파카에서 자동으로 벗겨진다. UI에 먹이/악세사리 카드 되팔기 버튼과 상단 `💸 판매` 아이콘으로 여는 알파카 판매 패널을 추가했다. (자세한 규칙은 §3 참고)
 
 ---
 

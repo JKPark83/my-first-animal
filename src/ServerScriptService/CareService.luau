@@ -39,6 +39,12 @@ local function notify(player: Player, message: string, isError: boolean?)
 	Remotes.Event("Notify"):FireClient(player, message, isError)
 end
 
+-- 알파카가 제거(판매/사망)될 때 디바운스 항목을 정리한다(메모리 누수 방지).
+-- 다른 서비스(예: 알파카 판매)에서 호출한다. uid 는 GUID 라 재사용되지 않으므로 안전.
+function CareService.clearDebounce(uid: string)
+	debounceMap[uid] = nil
+end
+
 -- 알파카 표시 이름 (별명 우선, 없으면 종 이름)
 local function displayNameOf(model: Model): string
 	local nick = model:GetAttribute("Nickname") :: string?

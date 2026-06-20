@@ -290,8 +290,8 @@ local dexLabel = makeLabel(("📖 도감 0/%d"):format(GameConfig.DexTotal), {
 -- 상단 HUD — 우상단 버튼 4개
 -- ======================================================================
 local hudRight = makeFrame({
-	Size                   = UDim2.new(0, 218, 0, 50),
-	Position               = UDim2.new(1, -228, 0, 12),
+	Size                   = UDim2.new(0, 272, 0, 50),
+	Position               = UDim2.new(1, -282, 0, 12),
 	BackgroundTransparency = 1,
 }, gui)
 make("UIListLayout", {
@@ -316,6 +316,7 @@ local shopBtn = topIconBtn("🛒", Color3.fromRGB(85, 168, 85),  1)
 local dexBtn  = topIconBtn("📖", Color3.fromRGB(85, 132, 200), 2)
 local rankBtn = topIconBtn("🏆", Color3.fromRGB(192, 152, 45), 3)
 local woolBtn = topIconBtn("🧺", Color3.fromRGB(162, 108, 190), 4)
+local sellBtn = topIconBtn("💸", Color3.fromRGB(214, 150, 70), 5)
 
 -- ======================================================================
 -- 빠른이동 버튼 (우측, 기존 4개 아이콘 버튼 아래 세로 스택)
@@ -381,18 +382,106 @@ local dexFrame:  any = nil
 local rankFrame: any = nil
 local foodFrame: any = nil
 local accFrame:  any = nil
+local sellFrame: any = nil
 
 -- 패널 새로고침 핸들러 (do 블록 안에서 할당, PlayerDataUpdated 에서 호출)
 local refreshFoodPanel: any = nil
 local refreshAccPanel:  any = nil
+local refreshSellPanel: any = nil
+
+-- 확인 다이얼로그(showConfirm)가 띄우는 모달 오버레이. closeAllPanels 가 정리할 수
+-- 있도록 showConfirm 정의보다 먼저 전방 선언한다.
+local confirmDialog: Frame? = nil
 
 -- 열린 패널을 모두 닫음
 local function closeAllPanels()
+	-- 떠 있는 확인 모달도 함께 제거(다른 패널로 전환 시 화면을 막는 유령 모달 방지)
+	if confirmDialog then
+		confirmDialog:Destroy()
+		confirmDialog = nil
+	end
 	if shopFrame then shopFrame.Visible = false end
 	if dexFrame  then dexFrame.Visible  = false end
 	if rankFrame then rankFrame.Visible = false end
 	if foodFrame then foodFrame.Visible = false end
 	if accFrame  then accFrame.Visible  = false end
+	if sellFrame then sellFrame.Visible = false end
+end
+
+-- ======================================================================
+-- 범용 확인 다이얼로그 (예/아니오) — 되돌릴 수 없는 행동(알파카 판매 등)에 사용
+-- ======================================================================
+local function showConfirm(title: string, message: string, confirmText: string, onConfirm: () -> ())
+	if confirmDialog then
+		confirmDialog:Destroy()
+		confirmDialog = nil
+	end
+	local overlay = makeFrame({
+		Size                   = UDim2.fromScale(1, 1),
+		BackgroundColor3       = Color3.fromRGB(0, 0, 0),
+		BackgroundTransparency = 0.45,
+		ZIndex                 = 90,
+		Active                 = true, -- 뒤쪽 클릭 차단(진짜 모달)
+	}, gui)
+	confirmDialog = overlay
+
+	local box = makeFrame({
+		Size             = UDim2.new(0, 384, 0, 220),
+		Position         = UDim2.new(0.5, -192, 0.5, -110),
+		BackgroundColor3 = Color3.fromRGB(255, 252, 244),
+		ZIndex           = 91,
+	}, overlay)
+	corner(16, box)
+	make("UIStroke", { Color = Color3.fromRGB(214, 150, 70), Thickness = 3 }, box)
+
+	makeLabel(title, {
+		Size       = UDim2.new(1, -24, 0, 34),
+		Position   = UDim2.new(0, 12, 0, 14),
+		Font       = Enum.Font.FredokaOne,
+		TextColor3 = Color3.fromRGB(52, 36, 12),
+		ZIndex     = 92,
+	}, box)
+
+	makeLabel(message, {
+		Size           = UDim2.new(1, -32, 0, 96),
+		Position       = UDim2.new(0, 16, 0, 52),
+		TextColor3     = Color3.fromRGB(110, 86, 50),
+		Font           = Enum.Font.GothamMedium,
+		TextWrapped    = true,
+		TextScaled     = false,
+		TextSize       = 16,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		ZIndex         = 92,
+	}, box)
+
+	local function close()
+		if overlay then
+			overlay:Destroy()
+		end
+		if confirmDialog == overlay then
+			confirmDialog = nil
+		end
+	end
+
+	local yes = makeButton(confirmText, Color3.fromRGB(198, 82, 72), {
+		Size     = UDim2.new(0.5, -20, 0, 44),
+		Position = UDim2.new(0, 16, 1, -58),
+		ZIndex   = 92,
+	}, box)
+	corner(10, yes)
+	yes.Activated:Connect(function()
+		playSound(GameConfig.Sounds.click)
+		close()
+		onConfirm()
+	end)
+
+	local no = makeButton("취소", Color3.fromRGB(150, 142, 128), {
+		Size     = UDim2.new(0.5, -20, 0, 44),
+		Position = UDim2.new(0.5, 4, 1, -58),
+		ZIndex   = 92,
+	}, box)
+	corner(10, no)
+	no.Activated:Connect(close)
 end
 
 -- ======================================================================
@@ -751,7 +840,7 @@ do
 		ZIndex              = 20,
 	}, panel)
 	make("UIGridLayout", {
-		CellSize    = UDim2.new(0, 172, 0, 212),
+		CellSize    = UDim2.new(0, 172, 0, 250),
 		CellPadding = UDim2.new(0, 10, 0, 10),
 		SortOrder   = Enum.SortOrder.LayoutOrder,
 	}, scroll)
@@ -811,17 +900,27 @@ do
 
 		local selectBtn = makeButton("사용하기", Color3.fromRGB(120, 150, 200), {
 			Size     = UDim2.new(1, -12, 0, 32),
-			Position = UDim2.new(0, 6, 1, -74),
+			Position = UDim2.new(0, 6, 1, -110),
 			ZIndex   = 21,
 		}, card)
 		corner(8, selectBtn)
 
 		local buyBtn = makeButton("", Color3.fromRGB(86, 165, 84), {
 			Size     = UDim2.new(1, -12, 0, 32),
-			Position = UDim2.new(0, 6, 1, -38),
+			Position = UDim2.new(0, 6, 1, -74),
 			ZIndex   = 21,
 		}, card)
 		corner(8, buyBtn)
+
+		-- 되팔기 버튼 (유료 먹이만; 보유 0개면 비활성 표시)
+		local sellBtn = makeButton("", Color3.fromRGB(214, 150, 70), {
+			Size     = UDim2.new(1, -12, 0, 32),
+			Position = UDim2.new(0, 6, 1, -38),
+			ZIndex   = 21,
+			Visible  = food.price > 0,
+		}, card)
+		corner(8, sellBtn)
+		local sellRefund = GameConfig.sellPrice(food.price)
 
 		local function update()
 			local owned = (data and data.foods and data.foods[food.id]) or 0
@@ -839,6 +938,18 @@ do
 				selectBtn.Text             = "사용하기"
 				selectBtn.BackgroundColor3 = Color3.fromRGB(120, 150, 200)
 				stroke.Color               = Color3.fromRGB(205, 180, 120)
+			end
+			-- 되팔기 버튼: 보유분이 있을 때만 활성
+			if food.price > 0 then
+				if owned > 0 then
+					sellBtn.Text             = "되팔기 +💰" .. sellRefund
+					sellBtn.BackgroundColor3 = Color3.fromRGB(214, 150, 70)
+					sellBtn.AutoButtonColor  = true
+				else
+					sellBtn.Text             = "되팔기 (보유 0)"
+					sellBtn.BackgroundColor3 = Color3.fromRGB(170, 162, 150)
+					sellBtn.AutoButtonColor  = false
+				end
 			end
 		end
 		foodCardUpdate[food.id] = update
@@ -860,6 +971,28 @@ do
 			playSound(GameConfig.Sounds.click)
 			Remotes.Event("RequestSelectFood"):FireServer(food.id)
 		end)
+
+		if food.price > 0 then
+			sellBtn.Activated:Connect(function()
+				local owned = (data and data.foods and data.foods[food.id]) or 0
+				if owned <= 0 then
+					showToast("되팔 " .. food.displayName .. "이(가) 없어요")
+					playSound(GameConfig.Sounds.error)
+					return
+				end
+				playSound(GameConfig.Sounds.click)
+				-- 낙관적 갱신: 서버 응답 전 빈틈에 같은 버튼을 연타해도 보유 수를
+				-- 초과 판매하지 않도록 로컬 보유 수를 즉시 1개 차감하고 새로고침한다.
+				if data and data.foods then
+					local left = (data.foods[food.id] or 0) - 1
+					data.foods[food.id] = (left > 0) and left or nil
+				end
+				Remotes.Event("RequestSellFood"):FireServer(food.id)
+				if refreshFoodPanel then
+					refreshFoodPanel()
+				end
+			end)
+		end
 	end
 
 	local function refreshFood()
@@ -908,7 +1041,7 @@ do
 		ZIndex              = 20,
 	}, panel)
 	make("UIGridLayout", {
-		CellSize    = UDim2.new(0, 128, 0, 98),
+		CellSize    = UDim2.new(0, 128, 0, 128),
 		CellPadding = UDim2.new(0, 8, 0, 8),
 		SortOrder   = Enum.SortOrder.LayoutOrder,
 	}, accScroll)
@@ -974,10 +1107,20 @@ do
 
 		local actionBtn = makeButton("", Color3.fromRGB(120, 150, 200), {
 			Size     = UDim2.new(1, -8, 0, 30),
-			Position = UDim2.new(0, 4, 1, -34),
+			Position = UDim2.new(0, 4, 1, -66),
 			ZIndex   = 21,
 		}, card)
 		corner(8, actionBtn)
+
+		-- 되팔기 버튼 (보유한 일반 악세사리에서만 표시; '벗기기' 카드 제외)
+		local sellRefund = GameConfig.sellPrice(price or 0)
+		local sellBtn = makeButton("되팔기 +\u{1F4B0}" .. sellRefund, Color3.fromRGB(214, 150, 70), {
+			Size     = UDim2.new(1, -8, 0, 28),
+			Position = UDim2.new(0, 4, 1, -32),
+			ZIndex   = 21,
+			Visible  = false,
+		}, card)
+		corner(8, sellBtn)
 
 		local function update()
 			if id == "" then
@@ -994,6 +1137,8 @@ do
 				return
 			end
 			local owned = data ~= nil and data.accessories and data.accessories[id] == true
+			-- 되팔기 버튼은 보유 중일 때만 노출
+			sellBtn.Visible = (owned == true)
 			if not owned then
 				actionBtn.Text             = "💰 " .. formatMoney(price or 0)
 				actionBtn.BackgroundColor3 = Color3.fromRGB(86, 165, 84)
@@ -1025,6 +1170,28 @@ do
 				refreshAcc()
 			end
 		end)
+
+		-- 되팔기: 보유 악세사리를 원가 80% 환급하고 보유 목록에서 제거(착용 중이면 서버가 자동 해제)
+		if id ~= "" then
+			sellBtn.Activated:Connect(function()
+				local owned = data ~= nil and data.accessories and data.accessories[id] == true
+				if not owned then
+					return
+				end
+				playSound(GameConfig.Sounds.click)
+				-- 낙관적 갱신: 서버 응답(PlayerDataUpdated)이 오기 전까지의 빈틈에
+				-- 같은 악세사리를 다시 누르면 중복 판매 요청·잘못된 토스트가 나가므로,
+				-- 로컬 캐시에서 즉시 제거하고 선택/라벨/버튼을 새로고침한다.
+				if data ~= nil and data.accessories then
+					data.accessories[id] = nil
+				end
+				if selectedAccId == id then
+					selectedAccId = nil
+				end
+				Remotes.Event("RequestSellAccessory"):FireServer(id)
+				refreshAcc()
+			end)
+		end
 	end
 
 	-- '벗기기' 카드 먼저, 그다음 악세사리들
@@ -1035,6 +1202,13 @@ do
 
 	-- 선택 라벨 + 카드 + 알파카 목록 갱신
 	refreshAcc = function()
+		-- 판매 등으로 더 이상 보유하지 않는 악세사리를 고른 상태면 선택을 해제한다.
+		if selectedAccId ~= nil and selectedAccId ~= "" then
+			local stillOwned = data ~= nil and data.accessories and data.accessories[selectedAccId] == true
+			if not stillOwned then
+				selectedAccId = nil
+			end
+		end
 		if selectedAccId == nil then
 			selLabel.Text = "구매한 악세사리를 골라 알파카에 입혀보세요."
 		elseif selectedAccId == "" then
@@ -1106,6 +1280,124 @@ do
 		refreshAcc()
 	end)
 end -- 악세사리 가게 블록 끝
+
+-- ======================================================================
+-- 내 알파카 판매 패널 (보유 알파카를 원가의 sellRatio 만큼 환급받고 떠나보냄)
+-- ======================================================================
+do
+	local panel = makePanelBase("💸 내 알파카 판매")
+	sellFrame = panel
+
+	makeLabel("알파카를 팔면 원가의 80%를 돌려받고 슬롯이 비워져요. (모으던 양털은 함께 사라져요)", {
+		Size           = UDim2.new(1, -24, 0, 40),
+		Position       = UDim2.new(0, 12, 0, 62),
+		TextColor3     = Color3.fromRGB(110, 86, 50),
+		Font           = Enum.Font.Gotham,
+		TextWrapped    = true,
+		TextScaled     = false,
+		TextSize       = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		ZIndex         = 21,
+	}, panel)
+
+	local listScroll = make("ScrollingFrame", {
+		Size                = UDim2.new(1, -24, 1, -116),
+		Position            = UDim2.new(0, 12, 0, 104),
+		BackgroundColor3    = Color3.fromRGB(248, 240, 224),
+		BorderSizePixel     = 0,
+		CanvasSize          = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness  = 6,
+		ZIndex              = 20,
+	}, panel)
+	corner(10, listScroll)
+	make("UIListLayout", {
+		Padding   = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, listScroll)
+	make("UIPadding", {
+		PaddingLeft   = UDim.new(0, 8),
+		PaddingRight  = UDim.new(0, 8),
+		PaddingTop    = UDim.new(0, 8),
+		PaddingBottom = UDim.new(0, 8),
+	}, listScroll)
+
+	local function refreshSell()
+		-- 행(Frame)/안내문(TextLabel)만 비우고 레이아웃 인스턴스는 유지
+		for _, ch in ipairs(listScroll:GetChildren()) do
+			if ch:IsA("Frame") or ch:IsA("TextLabel") then
+				ch:Destroy()
+			end
+		end
+		local alpacas = (data and data.alpacas) or {}
+		if #alpacas == 0 then
+			makeLabel("팔 알파카가 없어요. 먼저 알파카를 입양해보세요! 🦙", {
+				Size        = UDim2.new(1, -16, 0, 30),
+				LayoutOrder = 1,
+				TextColor3  = Color3.fromRGB(140, 110, 70),
+				Font        = Enum.Font.Gotham,
+				TextScaled  = false,
+				TextSize    = 15,
+				ZIndex      = 21,
+			}, listScroll)
+			return
+		end
+		for i, rec in ipairs(alpacas) do
+			local def = GameConfig.AlpacasById[rec.defId]
+			local species = (def and def.displayName) or rec.defId
+			local nm = (rec.name and rec.name ~= "" and rec.name) or species
+			local refund = (def and GameConfig.sellPrice(def.price)) or 0
+
+			local row = makeFrame({
+				Size             = UDim2.new(1, 0, 0, 52),
+				BackgroundColor3 = Color3.fromRGB(255, 250, 244),
+				LayoutOrder      = i,
+				ZIndex           = 21,
+			}, listScroll)
+			corner(8, row)
+
+			makeLabel(("🦙 %s\n%s"):format(nm, species), {
+				Size           = UDim2.new(1, -136, 1, 0),
+				Position       = UDim2.new(0, 10, 0, 0),
+				TextColor3     = Color3.fromRGB(60, 44, 20),
+				Font           = Enum.Font.GothamMedium,
+				TextScaled     = false,
+				TextSize       = 15,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				ZIndex         = 22,
+			}, row)
+
+			local sellRowBtn = makeButton(("💰 판매\n+%s"):format(formatMoney(refund)), Color3.fromRGB(214, 150, 70), {
+				Size     = UDim2.new(0, 118, 0, 42),
+				Position = UDim2.new(1, -124, 0.5, -21),
+				ZIndex   = 22,
+			}, row)
+			corner(8, sellRowBtn)
+			sellRowBtn.Activated:Connect(function()
+				playSound(GameConfig.Sounds.click)
+				showConfirm(
+					"알파카 판매",
+					("정말 %s을(를) 파시겠어요?\n+💰%s 을(를) 돌려받고 농장에서 영구히 떠나요.\n(모으던 양털은 함께 사라져요)"):format(nm, formatMoney(refund)),
+					"💸 판매하기",
+					function()
+						Remotes.Event("RequestSellAlpaca"):FireServer(rec.uid)
+					end
+				)
+			end)
+		end
+	end
+	refreshSellPanel = refreshSell
+
+	sellBtn.Activated:Connect(function()
+		local wasOpen = sellFrame.Visible
+		closeAllPanels()
+		if not wasOpen then
+			sellFrame.Visible = true
+			refreshSell()
+		end
+	end)
+end -- 내 알파카 판매 블록 끝
 
 -- ======================================================================
 -- 도감 패널
@@ -1423,6 +1715,9 @@ Remotes.Event("PlayerDataUpdated").OnClientEvent:Connect(function(newData: any)
 	end
 	if accFrame and accFrame.Visible and refreshAccPanel then
 		refreshAccPanel()
+	end
+	if sellFrame and sellFrame.Visible and refreshSellPanel then
+		refreshSellPanel()
 	end
 end)
 

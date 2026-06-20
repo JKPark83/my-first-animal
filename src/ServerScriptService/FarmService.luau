@@ -175,7 +175,10 @@ function FarmService.init()
 	DataManager.onLoaded(onLoaded)
 	DataManager.onBeforeSave(onBeforeSave)
 
-	Players.PlayerRemoving:Connect(function(player)
+	-- 플롯/알파카 모델 반납은 "최종 저장 이후"에 일어나야 한다.
+	-- (직접 PlayerRemoving 에 붙이면 DataManager 보다 먼저 등록돼 모델이 저장 전에
+	--  파괴되고, onBeforeSave 의 모델→데이터 동기화가 빈 목록으로 스킵된다.)
+	DataManager.onCleanup(function(player)
 		FarmBuilder.releasePlot(player)
 	end)
 end

@@ -86,6 +86,11 @@ local loaded: { [number]: boolean } = {}
 -- 결합 훅
 local loadedCallbacks: { (player: Player) -> () } = {}
 local beforeSaveCallbacks: { (player: Player) -> () } = {}
+-- 퇴장 시 "최종 저장이 끝난 뒤" 실행할 정리 훅.
+-- (예: 농장 플롯/알파카 모델 반납 — 저장 전에 모델을 파괴하면 onBeforeSave 의
+--  모델→데이터 동기화가 빈 목록으로 스킵돼 마지막 욕구/양털 상태가 유실되므로,
+--  반드시 save 이후에 돌려야 한다.)
+local cleanupCallbacks: { (player: Player) -> () } = {}
 
 -- =====================================================================
 -- 기본 데이터 / 검증
@@ -282,6 +287,12 @@ end
 
 function DataManager.onBeforeSave(fn: (player: Player) -> ())
 	beforeSaveCallbacks[#beforeSaveCallbacks + 1] = fn
+end
+
+-- 퇴장 시 최종 저장이 끝난 뒤 호출할 정리 콜백 등록.
+-- (모델 파괴 등 onBeforeSave 동기화 이후에 일어나야 하는 작업 전용)
+function DataManager.onCleanup(fn: (player: Player) -> ())
+	cleanupCallbacks[#cleanupCallbacks + 1] = fn
 end
 
 -- =====================================================================
@@ -536,10 +547,19 @@ function DataManager.consumeFood(player: Player, foodId: string): boolean
 	have -= 1
 	if have <= 0 then
 		data.foods[foodId] = nil
-		-- 마지막 한 개를 소진했고 그게 '사용 중' 먹이였다면 기본 먹이로 되돌려
-		-- 클라 UI 가 '보유 0개 + 사용 중' 으로 어긋나는 것을 막는다.
+		-- 마지막 한 개를 소진했고 그게 '사용 중' 먹이였다면 사용 먹이를 옮긴다.
+		-- (클라 UI 가 '보유 0개 + 사용 중' 으로 어긋나는 것을 막는다.)
+		-- 보유 중인 다른 유료 먹이가 있으면 그쪽으로 자동 전환하고,
+		-- 하나도 없으면 무료 기본 먹이(grass 등)로 되돌린다.
 		if data.selectedFood == foodId then
-			data.selectedFood = GameConfig.DefaultFood
+			local fallback = GameConfig.DefaultFood
+			for fid, n in pairs(data.foods) do
+				if n and n > 0 then
+					fallback = fid
+					break
+				end
+			end
+			data.selectedFood = fallback
 		end
 	else
 		data.foods[foodId] = have
@@ -587,6 +607,27 @@ function DataManager.addAccessory(player: Player, accId: string): boolean
 	return true
 end
 
+-- 악세사리 보유 제거(되팔기용). 착용 중인 알파카가 있으면 함께 해제한다.
+-- 반환: 해제된(=그 악세사리를 착용 중이던) 알파카 uid 목록 — 호출부가 모델 외형을 갱신하도록.
+-- 보유하지 않은 악세사리면 빈 목록을 반환한다(= 변경 없음).
+function DataManager.removeAccessory(player: Player, accId: string): { string }
+	local data = cache[player.UserId]
+	local affected: { string } = {}
+	if not data or data.accessories[accId] ~= true then
+		return affected
+	end
+	data.accessories[accId] = nil
+	-- 이 악세사리를 착용 중이던 알파카들을 모두 해제
+	for _, rec in ipairs(data.alpacas) do
+		if rec.accessory == accId then
+			rec.accessory = nil
+			affected[#affected + 1] = rec.uid
+		end
+	end
+	DataManager.pushToClient(player)
+	return affected
+end
+
 -- 알파카에 악세사리 장착/해제(accId=nil 이면 해제). 성공 여부 반환.
 function DataManager.setAlpacaAccessory(player: Player, uid: string, accId: string?): boolean
 	local rec = DataManager.getAlpacaByUid(player, uid)
@@ -617,6 +658,14 @@ function DataManager.init()
 
 	Players.PlayerRemoving:Connect(function(player)
 		DataManager.save(player)
+		-- 저장이 끝난 뒤에야 정리 훅(플롯/모델 반납 등)을 실행한다.
+		-- 순서가 바뀌면 모델이 먼저 파괴돼 마지막 상태가 저장되지 못한다.
+		for _, cb in ipairs(cleanupCallbacks) do
+			local ok, err = pcall(cb, player)
+			if not ok then
+				warn("[DataManager] onCleanup 콜백 오류: " .. tostring(err))
+			end
+		end
 		cache[player.UserId] = nil
 		loaded[player.UserId] = nil
 	end)

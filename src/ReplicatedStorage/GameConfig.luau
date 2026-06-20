@@ -269,6 +269,14 @@ GameConfig.Economy = {
 	-- "돈이 너무 안 벌린다" 대응으로 5배 상향. 더/덜 벌게 하려면 이 숫자만 바꾸면 됩니다.
 	moneyMultiplier = 5,
 
+	-- 되팔기(판매) 환급 비율: 먹이/악세사리/알파카를 원가의 이 비율만큼 돌려받는다.
+	-- 예) 0.8 → 원가의 80% 환급. 0.5 면 절반만.
+	sellRatio = 0.8,
+
+	-- 먹이/악세사리 등 "추가 소비재"는 알파카가 최소 이 수만큼 있어야 구매 가능.
+	-- (알파카 없이 돈을 다 써버려 수익원이 사라지는 막다른 길 방지)
+	minAlpacasToShop = 1,
+
 	-- N번째 슬롯을 여는 비용. slotCosts[i] = (startingSlots + i)번째 슬롯 비용.
 	-- 예) startingSlots=3 이면 slotCosts[1] = 4번째 슬롯 비용.
 	slotCosts = {
@@ -283,6 +291,14 @@ GameConfig.Economy = {
 		25000000, -- 12번째
 	},
 }
+
+-- 되팔기 환급액: 원가(price)에 sellRatio 를 곱해 내림한 정수. 음수/0 은 0 처리.
+function GameConfig.sellPrice(price: number): number
+	if not price or price <= 0 then
+		return 0
+	end
+	return math.floor(price * GameConfig.Economy.sellRatio)
+end
 
 -- 슬롯 확장 비용 조회 헬퍼. 현재 슬롯 수(currentSlots)에서 한 칸 더 늘릴 때의 비용.
 -- 더 늘릴 수 없으면 nil 반환.

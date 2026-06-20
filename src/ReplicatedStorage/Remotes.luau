@@ -32,6 +32,9 @@ local EVENT_NAMES = {
 	"RequestSelectFood", -- 사용할 먹이 선택 요청 (foodId)
 	"RequestBuyAccessory", -- 악세사리 구매 요청 (accId)
 	"RequestEquipAccessory", -- 악세사리 착용/해제 요청 (uid, accId 또는 ""=벗기기)
+	"RequestSellFood", -- 먹이 되팔기 요청 (foodId) — 보유 1개 차감, 원가 80% 환급
+	"RequestSellAccessory", -- 악세사리 되팔기 요청 (accId) — 보유 제거(착용 중이면 자동 해제), 원가 80% 환급
+	"RequestSellAlpaca", -- 알파카 되팔기 요청 (uid) — 모델/데이터 제거(슬롯 회수), 원가 80% 환급
 
 	-- 서버 → 클라
 	"PlayerDataUpdated", -- 플레이어 데이터(머니/슬롯/도감/보유알파카/부스트/먹이/악세사리) 갱신
