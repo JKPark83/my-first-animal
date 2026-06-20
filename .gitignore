@@ -1,0 +1,25 @@
+# Rojo / Roblox build artifacts
+*.rbxl
+*.rbxlx
+*.rbxl.lock
+*.rbxlx.lock
+
+# Roblox Studio backups
+*.bak
+
+# Secrets (Open Cloud 배포용 — 절대 커밋 금지)
+.env
+
+# Editor / OS
+.DS_Store
+.vscode/
+*.log
+
+# Wally package manager (if used later)
+/Packages
+/ServerPackages
+/DevPackages
+wally.lock
+
+# Claude Code 로컬 설정(에이전트 전용)
+.claude/

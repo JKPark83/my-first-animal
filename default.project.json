@@ -1,0 +1,40 @@
+{
+  "name": "my-first-animal",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$path": "src/ReplicatedStorage"
+    },
+
+    "ServerScriptService": {
+      "$path": "src/ServerScriptService"
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts"
+      }
+    },
+
+    "Workspace": {
+      "$className": "Workspace",
+      "$properties": {
+        "Gravity": 196.2,
+        "FilteringEnabled": true
+      }
+    },
+
+    "Lighting": {
+      "$className": "Lighting",
+      "$properties": {
+        "Ambient": [0.45, 0.45, 0.5],
+        "Brightness": 2.2,
+        "ClockTime": 14.5,
+        "GeographicLatitude": 41.7,
+        "OutdoorAmbient": [0.55, 0.55, 0.6]
+      }
+    }
+  }
+}
