@@ -32,6 +32,7 @@ local AlpacaAI = require(ServerScriptService.AlpacaAI)
 local LeaderboardService = require(ServerScriptService.LeaderboardService)
 local GamePassService = require(ServerScriptService.GamePassService)
 local TeleportService = require(ServerScriptService.TeleportService)
+local VehicleService = require(ServerScriptService.VehicleService)
 
 -- =====================================================================
 -- 1) 월드
@@ -51,6 +52,7 @@ AlpacaAI.init()
 LeaderboardService.init()
 GamePassService.init()
 TeleportService.init()
+VehicleService.init()
 
 -- =====================================================================
 -- 캐릭터 스폰: 배정된 농장으로 이동

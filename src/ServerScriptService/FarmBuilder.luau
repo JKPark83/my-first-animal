@@ -34,13 +34,15 @@ export type PlotInfo = {
 }
 
 local plots: { PlotInfo } = {}
-local plotSignLabels: { TextLabel } = {}
+local plotSignLabels: { { TextLabel } } = {} -- 농장별 간판 라벨들(앞/뒤 면 SurfaceGui)
 local assignedPlot: { [number]: number } = {} -- userId -> plot index
 local plotOwner: { [number]: number? } = {} -- plot index -> userId
 
 local builtSpawn: SpawnLocation? = nil
 local builtShopPad: BasePart? = nil
 local builtShopTeleport: CFrame? = nil -- 가게로 빠른 이동 시 도착 지점(가게 패드 위, 가게를 바라봄)
+local builtGaragePad: BasePart? = nil -- 밟으면 카트가 소환되는 차고 패드
+local builtKartSpawn: CFrame? = nil -- 카트 소환 위치(차고 패드 위, 농장 방향)
 local leaderboardLabel: TextLabel? = nil
 
 -- =====================================================================
@@ -165,30 +167,41 @@ local function buildPlot(index: number, centerX: number, centerZ: number): PlotI
 
 	buildFence(folder, centerX, centerZ)
 
-	-- 이름 간판 (북쪽 출입구 위)
-	local signPost = part({
-		Name = "SignPost",
-		Size = Vector3.new(8, 3, 0.6),
-		Position = Vector3.new(centerX, FARM.fenceHeight + 2, centerZ - PLOT / 2),
-		Material = Enum.Material.SmoothPlastic,
-		Color = Color3.fromRGB(90, 64, 40),
+	-- 이름 간판: 글자를 나무 판 면에 직접 인쇄(SurfaceGui)해 가림 현상 해소.
+	-- (기존: 떠 있는 BillboardGui 가 나무 판에 가려 안 보였음)
+	-- 출입구 양옆 게이트 기둥(±gateHalf=±7, 높이 fenceHeight) 위에 판을 얹는다.
+	-- → 새 기둥을 만들지 않아 울타리/게이트 기둥과 겹치지 않음.
+	local signZ = centerZ - PLOT / 2
+	local signWidth = 15 -- 게이트 기둥(±7)을 덮는 폭
+	local signHeight = 3.4
+	-- 간판 판: 게이트 기둥 윗면(y=fenceHeight) 바로 위 0.1 띄워 얹음
+	-- (정확히 0 으로 맞추면 판 바닥면과 기둥 윗면이 동일 평면 → z-fighting. 0.1 틈은 거리상 안 보임)
+	local signBoard = part({
+		Name = "SignBoard",
+		Size = Vector3.new(signWidth, signHeight, 0.6),
+		Position = Vector3.new(centerX, FARM.fenceHeight + 0.1 + signHeight / 2, signZ),
+		Material = Enum.Material.WoodPlanks,
+		Color = Color3.fromRGB(96, 66, 40),
 	}, folder)
-	local signGui = Instance.new("BillboardGui")
-	signGui.Size = UDim2.fromScale(10, 3)
-	signGui.StudsOffset = Vector3.new(0, 2, 0)
-	signGui.AlwaysOnTop = false
-	signGui.MaxDistance = 220
-	signGui.Parent = signPost
-	local signLabel = Instance.new("TextLabel")
-	signLabel.Size = UDim2.fromScale(1, 1)
-	signLabel.BackgroundTransparency = 1
-	signLabel.Text = "🌿 빈 농장"
-	signLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-	signLabel.TextStrokeTransparency = 0.4
-	signLabel.Font = Enum.Font.FredokaOne
-	signLabel.TextScaled = true
-	signLabel.Parent = signGui
-	plotSignLabels[index] = signLabel
+	-- 앞(허브 방향 -Z = Front) / 뒤(농장 안쪽 +Z = Back) 면에 글자 인쇄
+	local labels: { TextLabel } = {}
+	for _, face in ipairs({ Enum.NormalId.Front, Enum.NormalId.Back }) do
+		local sg = Instance.new("SurfaceGui")
+		sg.Face = face
+		sg.CanvasSize = Vector2.new(560, 130)
+		sg.Parent = signBoard
+		local lbl = Instance.new("TextLabel")
+		lbl.Size = UDim2.fromScale(1, 1)
+		lbl.BackgroundTransparency = 1
+		lbl.Text = "🌿 빈 농장"
+		lbl.TextColor3 = Color3.fromRGB(255, 248, 224)
+		lbl.TextStrokeTransparency = 0.4
+		lbl.Font = Enum.Font.FredokaOne
+		lbl.TextScaled = true
+		lbl.Parent = sg
+		labels[#labels + 1] = lbl
+	end
+	plotSignLabels[index] = labels
 
 	-- 알파카 폴더
 	local alpacasFolder = Instance.new("Folder")
@@ -378,6 +391,149 @@ function FarmBuilder.build(): Folder
 	body.Parent = boardGui
 	leaderboardLabel = body
 
+	-- =====================================================================
+	-- 도로망 + 가로 풍경 (허브 ↔ 농장 연결, 차량 주행용)
+	-- =====================================================================
+	local roadsFolder = Instance.new("Folder")
+	roadsFolder.Name = "Roads"
+	roadsFolder.Parent = root
+
+	local ROAD_Y = 0.15 -- 흙 바닥(윗면 y=0) 위에 살짝 얹힘
+	local function road(cx: number, cz: number, sx: number, sz: number)
+		part({
+			Name = "Road",
+			Size = Vector3.new(sx, 0.5, sz),
+			Position = Vector3.new(cx, ROAD_Y, cz),
+			Material = Enum.Material.Asphalt,
+			Color = Color3.fromRGB(66, 68, 74),
+		}, roadsFolder)
+	end
+	local function sidewalk(cx: number, cz: number, sx: number, sz: number)
+		part({
+			Name = "Sidewalk",
+			Size = Vector3.new(sx, 0.6, sz),
+			Position = Vector3.new(cx, ROAD_Y + 0.05, cz),
+			Material = Enum.Material.Concrete,
+			Color = Color3.fromRGB(205, 200, 188),
+		}, roadsFolder)
+	end
+	local function dash(cx: number, cz: number, sx: number, sz: number)
+		part({
+			Name = "LaneMark",
+			Size = Vector3.new(sx, 0.6, sz),
+			Position = Vector3.new(cx, ROAD_Y + 0.08, cz),
+			Material = Enum.Material.Neon,
+			Color = Color3.fromRGB(245, 226, 96),
+		}, roadsFolder)
+	end
+	local function lamp(cx: number, cz: number)
+		part({
+			Name = "LampPost",
+			Size = Vector3.new(0.6, 9, 0.6),
+			Position = Vector3.new(cx, 4.6, cz),
+			Material = Enum.Material.Metal,
+			Color = Color3.fromRGB(58, 60, 68),
+		}, roadsFolder)
+		local head = part({
+			Name = "LampHead",
+			Size = Vector3.new(1.8, 0.8, 1.8),
+			Position = Vector3.new(cx, 9.3, cz),
+			Material = Enum.Material.Neon,
+			Color = Color3.fromRGB(255, 236, 170),
+		}, roadsFolder)
+		local pl = Instance.new("PointLight")
+		pl.Color = Color3.fromRGB(255, 236, 170)
+		pl.Range = 24
+		pl.Brightness = 1.4
+		pl.Parent = head
+	end
+	local function tree(cx: number, cz: number)
+		part({
+			Name = "TreeTrunk",
+			Size = Vector3.new(2, 7, 2),
+			Position = Vector3.new(cx, 3.5, cz),
+			Material = Enum.Material.Wood,
+			Color = Color3.fromRGB(112, 80, 48),
+		}, roadsFolder)
+		part({
+			Name = "TreeLeaves",
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(11, 11, 11),
+			Position = Vector3.new(cx, 9.5, cz),
+			Material = Enum.Material.Grass,
+			Color = Color3.fromRGB(86, 158, 74),
+		}, roadsFolder)
+	end
+
+	-- 중앙 대로 (허브 → 농장, +Z 방향)
+	road(0, 67, 20, 92) -- z ≈ 21 ~ 113 (허브 남쪽 가장자리에서 농장 앞까지)
+	for z = 28, 106, 12 do
+		dash(0, z, 1.4, 5)
+	end
+	sidewalk(-11.5, 67, 3, 92)
+	sidewalk(11.5, 67, 3, 92)
+
+	-- 농장 앞 가로 도로 (모든 농장 입구를 잇는 동서 도로)
+	local frontZ = 113
+	road(0, frontZ, 640, 16)
+	for x = -300, 300, 16 do
+		dash(x, frontZ, 5, 1.4)
+	end
+	sidewalk(0, frontZ - 9.2, 640, 2.5)
+
+	-- 가로등 (대로 양옆)
+	for z = 24, 108, 28 do
+		lamp(-13.5, z)
+		lamp(13.5, z)
+	end
+
+	-- 가로수 (빈 흙 공간 채우기)
+	tree(-34, 44)
+	tree(34, 60)
+	tree(-34, 88)
+	tree(34, 30)
+	tree(-60, 70)
+	tree(60, 96)
+
+	-- 허브 데크(윗면 y=0.95) ↔ 중앙 대로(윗면 y=0.40) 경사로.
+	-- 데크와 도로 사이 0.55 턱을 완만한 램프로 메워 카트가 걸리지 않게 한다.
+	-- 윗면: 북쪽 끝(z≈23, 데크 옆) 0.95 → 남쪽 끝(z≈35, 도로) 0.40 (약 2.6° 경사)
+	local ramp = part({
+		Name = "HubRamp",
+		Size = Vector3.new(22, 0.6, 12),
+		Position = Vector3.new(0, 0.375, 29),
+		Material = Enum.Material.Asphalt,
+		Color = Color3.fromRGB(72, 74, 80),
+	}, roadsFolder)
+	ramp.CFrame = CFrame.new(ramp.Position) * CFrame.Angles(math.rad(2.6), 0, 0)
+
+	-- 차고 패드(밟으면 카트 소환) — 허브 데크 위(스폰 바로 남쪽)
+	-- 윗면 y=1.1 로 데크 윗면(0.95)보다 살짝 높여 z-fighting 방지(턱 0.15 — 주행 무시 가능)
+	local garagePad = part({
+		Name = "GaragePad",
+		Size = Vector3.new(14, 1, 14),
+		Position = Vector3.new(0, 0.6, 18),
+		Material = Enum.Material.Neon,
+		Color = Color3.fromRGB(140, 220, 150),
+	}, root)
+	builtGaragePad = garagePad
+	-- 카트 소환 위치: 패드 위, 농장 쪽(+Z)을 바라봄 (기본 LookVector -Z 라 180° 회전)
+	builtKartSpawn = CFrame.new(garagePad.Position + Vector3.new(0, 2.6, 0)) * CFrame.Angles(0, math.rad(180), 0)
+	local garageGui = Instance.new("BillboardGui")
+	garageGui.Size = UDim2.fromScale(8, 2.6)
+	garageGui.StudsOffset = Vector3.new(0, 4, 0)
+	garageGui.AlwaysOnTop = true
+	garageGui.MaxDistance = 90
+	garageGui.Parent = garagePad
+	local garageLabel = Instance.new("TextLabel")
+	garageLabel.Size = UDim2.fromScale(1, 1)
+	garageLabel.BackgroundTransparency = 1
+	garageLabel.Text = "🛺 카트 타기"
+	garageLabel.TextColor3 = Color3.fromRGB(20, 70, 30)
+	garageLabel.Font = Enum.Font.FredokaOne
+	garageLabel.TextScaled = true
+	garageLabel.Parent = garageGui
+
 	-- 개인 농장 구역들 (+Z 남쪽 한 줄)
 	local plotZ = 150
 	for i = 1, FARM.maxFarms do
@@ -408,6 +564,16 @@ function FarmBuilder.getShopTeleportCFrame(): CFrame?
 	return builtShopTeleport
 end
 
+-- 카트 차고 패드 (밟으면 카트 소환). 빌드 전이면 nil.
+function FarmBuilder.getGaragePad(): BasePart?
+	return builtGaragePad
+end
+
+-- 카트 소환 CFrame (차고 패드 위). 빌드 전이면 nil.
+function FarmBuilder.getKartSpawnCFrame(): CFrame?
+	return builtKartSpawn
+end
+
 -- 빈 농장을 배정하고 인덱스 반환. 없으면 nil.
 function FarmBuilder.assignPlot(player: Player): number?
 	if assignedPlot[player.UserId] then
@@ -418,7 +584,9 @@ function FarmBuilder.assignPlot(player: Player): number?
 			plotOwner[i] = player.UserId
 			assignedPlot[player.UserId] = i
 			if plotSignLabels[i] then
-				plotSignLabels[i].Text = "🌿 " .. player.Name .. " 의 농장"
+				for _, lbl in ipairs(plotSignLabels[i]) do
+					lbl.Text = "🌿 " .. player.Name .. " 의 농장"
+				end
 			end
 			return i
 		end
@@ -432,7 +600,9 @@ function FarmBuilder.releasePlot(player: Player)
 		plotOwner[i] = nil
 		assignedPlot[player.UserId] = nil
 		if plotSignLabels[i] then
-			plotSignLabels[i].Text = "🌿 빈 농장"
+			for _, lbl in ipairs(plotSignLabels[i]) do
+				lbl.Text = "🌿 빈 농장"
+			end
 		end
 		-- 남은 알파카 정리
 		local plot = plots[i]

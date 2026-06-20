@@ -23,6 +23,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 local SoundService      = game:GetService("SoundService")
 local Debris            = game:GetService("Debris")
+local RunService        = game:GetService("RunService")
 
 local GameConfig = require(ReplicatedStorage:WaitForChild("GameConfig"))
 local Remotes    = require(ReplicatedStorage:WaitForChild("Remotes"))
@@ -351,18 +352,8 @@ local homeTpBtn = makeButton("🏠 내 농장", Color3.fromRGB(85, 168, 85), {
 }, teleportStack)
 corner(13, homeTpBtn)
 
--- 빠른이동 버튼 핸들러: click 효과음 → teleport 효과음 → 서버에 전송
-shopTpBtn.Activated:Connect(function()
-	playSound(GameConfig.Sounds.click)
-	playSound(GameConfig.Sounds.teleport)
-	Remotes.Event("RequestTeleport"):FireServer("shop")
-end)
-
-homeTpBtn.Activated:Connect(function()
-	playSound(GameConfig.Sounds.click)
-	playSound(GameConfig.Sounds.teleport)
-	Remotes.Event("RequestTeleport"):FireServer("home")
-end)
+-- 빠른이동 버튼 핸들러는 closeAllPanels() 정의 이후(아래)에서 연결한다.
+-- (이동 시 열려있던 상점 등 팝업을 함께 닫기 위함)
 
 -- ======================================================================
 -- 패널 공통 유틸
@@ -378,6 +369,53 @@ local function closeAllPanels()
 	if shopFrame then shopFrame.Visible = false end
 	if dexFrame  then dexFrame.Visible  = false end
 	if rankFrame then rankFrame.Visible = false end
+end
+
+-- ======================================================================
+-- 빠른이동 버튼 핸들러 (click → teleport 효과음 → 서버 요청)
+-- 이동 시 열려있던 팝업(상점/도감/순위)을 자동으로 닫는다.
+-- ======================================================================
+shopTpBtn.Activated:Connect(function()
+	playSound(GameConfig.Sounds.click)
+	playSound(GameConfig.Sounds.teleport)
+	closeAllPanels()
+	Remotes.Event("RequestTeleport"):FireServer("shop")
+end)
+
+homeTpBtn.Activated:Connect(function()
+	playSound(GameConfig.Sounds.click)
+	playSound(GameConfig.Sounds.teleport)
+	closeAllPanels() -- 내 농장으로 돌아가면 상점 등 팝업을 닫음
+	Remotes.Event("RequestTeleport"):FireServer("home")
+end)
+
+-- ======================================================================
+-- 상점 구역을 벗어나면 상점 팝업을 자동으로 닫는다.
+-- (가게 패드에서 일정 거리 이상 멀어지면 닫힘 → 걸어서 가게를 벗어나는 경우 커버)
+-- ======================================================================
+do
+	local shopPad: BasePart? = nil
+	task.spawn(function()
+		local farm = workspace:WaitForChild("AlpacaFarm", 30)
+		local shop = farm and farm:WaitForChild("Shop", 15)
+		shopPad = shop and (shop:WaitForChild("ShopPad", 15) :: any)
+	end)
+	local CLOSE_DISTANCE = 40 -- 패드 기준 수평 거리(studs)
+	local acc = 0
+	RunService.Heartbeat:Connect(function(dt: number)
+		acc += dt
+		if acc < 0.25 then return end -- 0.25초마다만 검사(가벼움)
+		acc = 0
+		if not shopFrame or not shopFrame.Visible then return end
+		if not shopPad then return end
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		if not root then return end
+		local d = (root :: BasePart).Position - shopPad.Position
+		if Vector3.new(d.X, 0, d.Z).Magnitude > CLOSE_DISTANCE then
+			shopFrame.Visible = false
+		end
+	end)
 end
 
 -- 패널 베이스 생성: 560×520 중앙 패널 + 헤더 + ✕ 버튼
