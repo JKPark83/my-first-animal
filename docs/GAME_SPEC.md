@@ -141,6 +141,20 @@
 - 욕구가 **20 미만이면 케어 불가** → 사실상 케어 한 번 후 약 60초의 자연 쿨다운이 생긴다.
 - **시각 경고 임계치**: Hunger ≥ 55, Tangle ≥ 50, Dirt ≥ 50일 때 알파카 머리 위 게이지/표정으로 표시.
 
+### 굶주림 사망
+| 설정 | 값 |
+| --- | --- |
+| 경고 시점 (starveWarnTime) | **600초 (10분)** 먹이 미급여 |
+| 사망 시점 (starveDeathTime) | **1200초 (20분)** 먹이 미급여 |
+
+- 마지막으로 먹인 시각(`Fed` 속성) 기준으로 누적 시간을 측정한다. **접속 중일 때만** 계산되며 스폰·로그인·먹이주기 때마다 기준 시각이 갱신돼 오프라인 시간은 제외된다.
+- 10분 경고 시 알림을 1회 보내고(`StarveWarned`), 20분까지 먹이를 주지 않으면 알파카가 **영구 사망**한다 → 모델 제거 + 데이터 삭제로 슬롯이 비워진다.
+- **먹이주기(feed)** 액션은 배고픔을 0으로 만드는 동시에 이 굶주림 타이머도 리셋한다.
+
+### 케어 동작(모션)
+- **빗질·목욕**은 캐릭터가 팔을 움직이는 절차적 동작을 취한다(R15 어깨 `Motor6D`를 매 프레임 덮어씀, 빗질=한 팔·목욕=양 팔). R6 캐릭터는 기존 이모트로 대체된다.
+- **먹이주기**는 기존 이모트를 사용하며, 먹이주기 시 진행 중이던 빗질/목욕 동작은 즉시 취소된다.
+
 ### 행복도 (Happiness)
 ```
 Happiness = clamp(100 − (Hunger + Tangle + Dirt) / 3, 0, 100)
@@ -336,21 +350,24 @@ netWorth = 보유 머니 + Σ(알파카 가격) + Σ(미수집 양털)
 
 **RemoteFunction**: `GetPlayerData` (클라 부팅 시 초기 데이터 요청, 최대 10초 폴링).
 
-**RemoteEvent — 클라 → 서버 (7개):**
-`RequestBuyAlpaca` · `RequestNameAlpaca` · `RequestExpandSlot` · `RequestCare` · `RequestCollectWool` · `RequestBuyGamePass` · `RequestTeleport`
+**RemoteEvent — 클라 → 서버 (11개):**
+`RequestBuyAlpaca` · `RequestNameAlpaca` · `RequestExpandSlot` · `RequestCare` · `RequestCollectWool` · `RequestBuyGamePass` · `RequestTeleport` · `RequestBuyFood` · `RequestSelectFood` · `RequestBuyAccessory` · `RequestEquipAccessory`
 
-**RemoteEvent — 서버 → 클라 (7개):**
-`PlayerDataUpdated` · `CareFeedback` · `WoolCollected` · `LeaderboardUpdated` · `OpenShopRequest` · `PromptNameAlpaca` · `Notify`
+**RemoteEvent — 서버 → 클라 (9개):**
+`PlayerDataUpdated` · `CareFeedback` · `WoolCollected` · `LeaderboardUpdated` · `OpenShopRequest` · `PromptNameAlpaca` · `Notify` · `OpenFoodShop` · `OpenAccessoryShop`
 
 ---
 
 ## 15. 이번 작업(개선) 요약
 
-이번 세션에서 반영한 3가지 개선:
+이번 세션에서 추가한 4가지 기능:
 
-1. **상점 팝업 자동 닫힘** — 빠른이동 버튼을 누르거나 가게에서 40 studs 이상 멀어지면 상점 팝업이 자동으로 닫힌다.
-2. **농장 간판 가독성 개선** — 정문 위에 떠 있어 가려지던 BillboardGui 대신, 나무 간판 면에 "○○○의 농장" 글자를 직접 인쇄(SurfaceGui)해 양면에서 또렷하게 보이도록 했다.
-3. **도로망 + 탈것 추가** — 중앙 대로·전면 도로·차선·인도·가로등·가로수·허브 경사로를 깔고, 차고 패드에서 소환해 탈 수 있는 농장 카트를 추가했다.
+1. **악세사리 가게** — 알파카 옷 8종(밀짚모자~왕관)을 파는 전용 가게. 구매하면 보유 목록에 쌓이고, 악세사리 하나를 고른 뒤 농장의 특정 알파카를 선택해 입히거나 벗길 수 있다. 가게로 순간이동하는 `🎀 악세사리` 버튼을 제공하며, 악세사리 파츠는 알파카 모델에 부착돼 이동·AI 동작을 그대로 따라간다.
+2. **먹이 상점(인벤토리형)** — 먹이 5종(풀·당근·건초·프리미엄·매직)을 판매하며, 종마다 가격·케어 보상 배수·정돈 효과·양털 보너스가 다르다. 먹이를 사면 개수가 쌓이고, '사용 먹이'를 고르면 먹이주기마다 1개씩 소비되며 재고가 떨어지면 무료 기본 먹이(풀)로 자동 대체된다. `🍽️ 먹이상점` 순간이동 버튼 제공.
+3. **굶주림 사망** — 먹이를 오래 주지 않으면 알파카가 떠난다. 접속 중 누적 시간 기준으로 10분(`starveWarnTime`)에 경고하고 20분(`starveDeathTime`) 동안 먹이를 주지 않으면 영구 사망해 슬롯이 비워진다. 스폰·먹이주기 시 기준 시각(`Fed`)을 갱신해 오프라인 시간은 계산에서 제외한다.
+4. **빗질·목욕 동작** — 빗질/목욕 시 캐릭터가 실제로 팔을 움직인다. R15 어깨 관절(`Motor6D.Transform`)을 매 프레임 덮어쓰는 절차적 애니메이션이며(빗질=한 팔, 목욕=양 팔), R6 캐릭터는 R15 팔이 없어 기존 이모트로 대체된다.
+
+이후 적대적 코드리뷰로 발견한 보강 사항: 먹이 소진 시 사용 먹이 자동 복귀, 미보유 유료 먹이 선택 차단, 먹이주기 시 진행 중이던 빗질/목욕 동작 즉시 취소, 퇴장 시 디바운스 항목 정리, 세 상점 팝업 모두 패드 이탈 시 자동 닫힘.
 
 ---
 

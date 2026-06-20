@@ -178,7 +178,11 @@ local function reconcile(raw: any): PlayerData
 			end
 		end
 	end
-	if type(raw.selectedFood) == "string" and GameConfig.FoodsById[raw.selectedFood] then
+	-- 저장된 선택 먹이는 (1) 존재하는 먹이이고 (2) 기본 무료 먹이거나 실제 보유 중일 때만 인정.
+	-- 그렇지 않으면 defaultData 의 DefaultFood 를 유지해 '보유 0 + 사용 중' 어긋남을 막는다.
+	if type(raw.selectedFood) == "string" and GameConfig.FoodsById[raw.selectedFood]
+		and (raw.selectedFood == GameConfig.DefaultFood or (data.foods[raw.selectedFood] or 0) > 0)
+	then
 		data.selectedFood = raw.selectedFood
 	end
 	if type(raw.accessories) == "table" then
@@ -590,6 +594,10 @@ function DataManager.setAlpacaAccessory(player: Player, uid: string, accId: stri
 		return false
 	end
 	if accId ~= nil and not GameConfig.AccessoriesById[accId] then
+		return false
+	end
+	-- 방어: 보유하지 않은 악세사리는 장착 불가(해제 nil 은 항상 허용).
+	if accId ~= nil and not DataManager.hasAccessory(player, accId) then
 		return false
 	end
 	rec.accessory = accId

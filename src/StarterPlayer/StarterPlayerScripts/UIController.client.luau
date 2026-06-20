@@ -432,26 +432,55 @@ end)
 -- (가게 패드에서 일정 거리 이상 멀어지면 닫힘 → 걸어서 가게를 벗어나는 경우 커버)
 -- ======================================================================
 do
+	-- 세 상점(알파카/먹이/악세사리) 패드를 각각 찾아둔다.
 	local shopPad: BasePart? = nil
+	local foodPad: BasePart? = nil
+	local accPad:  BasePart? = nil
 	task.spawn(function()
 		local farm = workspace:WaitForChild("AlpacaFarm", 30)
-		local shop = farm and farm:WaitForChild("Shop", 15)
+		if not farm then return end
+		local shop = farm:WaitForChild("Shop", 15)
 		shopPad = shop and (shop:WaitForChild("ShopPad", 15) :: any)
+		local foodShop = farm:WaitForChild("FoodShop", 15)
+		foodPad = foodShop and (foodShop:WaitForChild("Pad", 15) :: any)
+		local accShop = farm:WaitForChild("AccessoryShop", 15)
+		accPad = accShop and (accShop:WaitForChild("Pad", 15) :: any)
 	end)
+
 	local CLOSE_DISTANCE = 40 -- 패드 기준 수평 거리(studs)
+
+	-- 루트가 해당 패드에서 CLOSE_DISTANCE 보다 멀리 있으면 true
+	local function farFrom(pad: BasePart?, root: BasePart): boolean
+		if not pad then
+			return false
+		end
+		local d = root.Position - pad.Position
+		return Vector3.new(d.X, 0, d.Z).Magnitude > CLOSE_DISTANCE
+	end
+
 	local acc = 0
 	RunService.Heartbeat:Connect(function(dt: number)
 		acc += dt
 		if acc < 0.25 then return end -- 0.25초마다만 검사(가벼움)
 		acc = 0
-		if not shopFrame or not shopFrame.Visible then return end
-		if not shopPad then return end
+		-- 열린 패널이 하나도 없으면 즉시 종료(가벼움)
+		local anyOpen = (shopFrame and shopFrame.Visible)
+			or (foodFrame and foodFrame.Visible)
+			or (accFrame and accFrame.Visible)
+		if not anyOpen then return end
 		local char = player.Character
 		local root = char and char:FindFirstChild("HumanoidRootPart")
 		if not root then return end
-		local d = (root :: BasePart).Position - shopPad.Position
-		if Vector3.new(d.X, 0, d.Z).Magnitude > CLOSE_DISTANCE then
+		local r = root :: BasePart
+		-- 각 패널은 자기 패드에서 멀어지면 닫는다.
+		if shopFrame and shopFrame.Visible and farFrom(shopPad, r) then
 			shopFrame.Visible = false
+		end
+		if foodFrame and foodFrame.Visible and farFrom(foodPad, r) then
+			foodFrame.Visible = false
+		end
+		if accFrame and accFrame.Visible and farFrom(accPad, r) then
+			accFrame.Visible = false
 		end
 	end)
 end
