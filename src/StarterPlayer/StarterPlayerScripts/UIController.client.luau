@@ -24,6 +24,7 @@ local TweenService      = game:GetService("TweenService")
 local SoundService      = game:GetService("SoundService")
 local Debris            = game:GetService("Debris")
 local RunService        = game:GetService("RunService")
+local GuiService        = game:GetService("GuiService")
 
 local GameConfig = require(ReplicatedStorage:WaitForChild("GameConfig"))
 local Remotes    = require(ReplicatedStorage:WaitForChild("Remotes"))
@@ -574,15 +575,25 @@ do
 	end)
 end
 
--- 패널 베이스 생성: 560×520 중앙 패널 + 헤더 + ✕ 버튼
+-- 팝업 패널 기준(디자인) 크기. 작은 화면에서는 UIScale 로 축소해 ✕ 가 항상 보이게 한다.
+local PANEL_DESIGN_W = 580
+local PANEL_DESIGN_H = 530
+-- 반응형으로 위치·배율을 다시 잡아야 할 패널 목록 (layoutSafeArea 가 갱신)
+local responsivePanels: { { panel: Frame, scale: UIScale } } = {}
+
+-- 패널 베이스 생성: 580×530 디자인 패널(작은 화면 자동 축소) + 헤더 + ✕ 버튼
 local function makePanelBase(title: string): (Frame, TextButton)
 	local panel = makeFrame({
-		Size             = UDim2.new(0, 580, 0, 530),
-		Position         = UDim2.new(0.5, -290, 0.5, -265),
+		Size             = UDim2.new(0, PANEL_DESIGN_W, 0, PANEL_DESIGN_H),
+		AnchorPoint      = Vector2.new(0.5, 0.5),
+		Position         = UDim2.new(0.5, 0, 0.5, 0), -- layoutSafeArea 가 안전영역 중앙으로 재배치
 		BackgroundColor3 = Color3.fromRGB(255, 250, 238),
 		Visible          = false,
 		ZIndex           = 20,
 	}, gui)
+	-- 화면이 작으면 패널 전체를 축소(헤더의 ✕ 가 화면 밖으로 잘리는 것 방지)
+	local panelScale = make("UIScale", { Scale = 1 }, panel) :: UIScale
+	responsivePanels[#responsivePanels + 1] = { panel = panel, scale = panelScale }
 	corner(18, panel)
 	make("UIStroke", { Color = Color3.fromRGB(202, 172, 118), Thickness = 2 }, panel)
 
@@ -1841,5 +1852,57 @@ end
 Remotes.Event("PromptNameAlpaca").OnClientEvent:Connect(function(uid: string, defId: string, speciesName: string)
 	showNameDialog(uid, defId, speciesName)
 end)
+
+-- ======================================================================
+-- 모바일 안전영역 대응
+--   1) HUD(잔액/슬롯/도감, 우상단 아이콘, 빠른이동)를 로블록스 상단바
+--      (채팅·메뉴·나가기 버튼) 아래로 내려 가려지지 않게 한다.
+--   2) 팝업 패널이 작은 화면(특히 모바일 가로)에서 화면보다 커져 헤더의 ✕ 가
+--      잘리는 것을 막기 위해, 안전영역에 맞춰 UIScale 로 축소하고 중앙 배치한다.
+-- (gui.IgnoreGuiInset=true 라 인셋을 수동으로 보정해야 한다.)
+-- ======================================================================
+local function layoutSafeArea()
+	local cam = workspace.CurrentCamera
+	local vp = (cam and cam.ViewportSize) or Vector2.new(960, 540)
+	local inset = GuiService:GetGuiInset() -- 상단바가 차지하는 좌상단 인셋(Vector2)
+	local top = inset.Y
+
+	-- HUD 를 상단바 아래로
+	hudLeft.Position       = UDim2.new(0, 12, 0, top + 12)
+	hudRight.Position      = UDim2.new(1, -282, 0, top + 12)
+	teleportStack.Position = UDim2.new(1, -150, 0, top + 70)
+	toastHolder.Position   = UDim2.new(0.5, -210, 0, top + 12)
+
+	-- 팝업 패널: 안전영역(상단바 아래) 안에 들어가도록 축소 + 안전영역 중앙 배치
+	local marginX, marginY = 16, 12
+	local availW = vp.X - marginX * 2
+	local availH = (vp.Y - top) - marginY * 2
+	local scale = math.min(1, availW / PANEL_DESIGN_W, availH / PANEL_DESIGN_H)
+	local centerY = top + (vp.Y - top) / 2
+	for _, entry in ipairs(responsivePanels) do
+		entry.scale.Scale = scale
+		entry.panel.Position = UDim2.new(0.5, 0, 0, math.floor(centerY))
+	end
+end
+
+layoutSafeArea()
+
+-- 화면 회전/해상도 변경, 카메라 교체, 상단바 인셋 변화에 맞춰 다시 배치
+do
+	local function hookCamera(c: Camera?)
+		if c then
+			c:GetPropertyChangedSignal("ViewportSize"):Connect(layoutSafeArea)
+		end
+	end
+	hookCamera(workspace.CurrentCamera)
+	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+		hookCamera(workspace.CurrentCamera)
+		layoutSafeArea()
+	end)
+	-- 상단바 인셋(TopbarInset) 변화 — 구버전 클라에서 없을 수 있어 pcall 보호
+	pcall(function()
+		GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(layoutSafeArea)
+	end)
+end
 
 print("[UIController] 알파카 농장 UI 초기화 완료 🦙")
